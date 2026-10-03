@@ -467,7 +467,7 @@ TEST_F(WeakTest, ASlotThatIsNotAPayloadStartIsCountedAndCleared) {
 }
 
 TEST_F(WeakTest, EphemeronSlotsThatAreInvalidOrHaveNoKeyAreCountedAndCleared) {
-  HeapWorld w;
+  HeapWorld w(steady());
   the_heap = w.heap;
   int local = 0;
   Node * live = target(w, 1);

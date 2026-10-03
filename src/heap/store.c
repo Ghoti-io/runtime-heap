@@ -54,7 +54,8 @@ GRHEAP_Result grheap_store(
 GRHEAP_Result grheap_store_range(GRHEAP_Heap * heap, void * holder,
     void ** dst, void * const * src, size_t count) {
   (void)holder;
-  if (!grheap_usable(heap) || (count != 0 && (dst == NULL || src == NULL))) {
+  if (!grheap_usable(heap) || (count != 0 && (dst == NULL || src == NULL)) ||
+      count > SIZE_MAX / sizeof(void *)) {
     return GRHEAP_ERR_INVALID;
   }
   if (count != 0) {

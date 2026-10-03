@@ -213,7 +213,8 @@ GRHEAP_INTERNAL_API GRHEAP_Span * grheap_span_find(
 /**
  * Makes a span: its metadata through the allocator, its pages from the
  * provider, and an entry in the sorted array (reserved first, so that the
- * insert cannot fail). A failure leaves nothing behind.
+ * insert cannot fail). A failure leaves no span and no mapping behind; the
+ * sorted array may stay grown, which is memory the heap keeps for its next span.
  *
  * @param cell For a BLOCK, the cell size; for a large one, the object's cell.
  */

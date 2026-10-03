@@ -120,7 +120,8 @@ An allocation the context's memory budget refused is `GRHEAP_ERR_LIMIT`; one
 the allocator or provider failed is `GRHEAP_ERR_OOM`.
 
 **Threads.** The heap belongs to its context's owning thread; every function
-refuses another thread with `GRHEAP_ERR_INVALID`. The heap and its handles
+that acts on the heap refuses another thread with `GRHEAP_ERR_INVALID` (the
+queries answer NULL or false instead). The heap and its handles
 migrate with the context.
 
 [examples/README.md](examples/README.md) indexes the runnable examples by what

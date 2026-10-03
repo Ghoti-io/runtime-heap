@@ -489,3 +489,44 @@ int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+// A small object occupies its size class's cell, which can be larger than the
+// 16-byte-rounded cell it asked for. Allocation and sweep must count the same.
+TEST(Stats, LiveBytesAgreeBeforeAndAfterACollectionForAnyClassSize) {
+  HeapWorld w;
+  static const GRHEAP_Type kBlob = {"blob", 0, nullptr, nullptr};
+  // 112 + 17 -> a 144-byte need, held in the 160 class; 1000 -> a 1024 class.
+  for (size_t bytes : {size_t(112), size_t(1000), size_t(130), size_t(8000)}) {
+    void * p;
+    ASSERT_EQ(grheap_alloc_sized(w.heap, &kBlob, bytes, &p), GRHEAP_OK);
+    GRHEAP_Handle * h;
+    ASSERT_EQ(grheap_handle_create(w.heap, p, &h), GRHEAP_OK);
+  }
+  uint64_t before = w.stats().live_bytes;
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  GRHEAP_Stats after = w.stats();
+  EXPECT_EQ(after.live_objects, 4u);
+  EXPECT_EQ(after.live_bytes, before);
+}
+
+static GRHEAP_Handle * g_hook_handle = nullptr;
+static GRHEAP_Result g_hook_result = GRHEAP_OK;
+static void hook_destroy(void *) {
+  g_hook_result = grheap_handle_set(g_hook_handle, nullptr);
+}
+
+// A destroy hook runs with the heap busy and may not retarget a handle.
+TEST(Stats, AHandleCannotBeRetargetedFromADestroyHook) {
+  HeapWorld w;
+  static const GRHEAP_Type kHooked = {"hooked", 8, nullptr, hook_destroy};
+  void * dying;
+  void * kept;
+  ASSERT_EQ(grheap_alloc(w.heap, &kHooked, &dying), GRHEAP_OK);
+  ASSERT_EQ(grheap_alloc(w.heap, &kHooked, &kept), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_create(w.heap, kept, &g_hook_handle), GRHEAP_OK);
+  g_hook_result = GRHEAP_OK;
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(g_hook_result, GRHEAP_ERR_INVALID);
+  EXPECT_EQ(grheap_handle_get(g_hook_handle), kept);
+  g_hook_handle = nullptr;
+}

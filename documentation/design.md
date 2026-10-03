@@ -259,8 +259,10 @@ an arena and a stop-the-world full mark, are context policy (AD-11).
 ## Ownership and threads
 
 The heap and its handles belong to the context's owning thread (AD-6, AD-20).
-Every function checks `grcore_context_is_owner` and refuses another thread with
-`ERR_INVALID`, so a heap whose context has been released is unusable by
+Every function that changes the heap checks `grcore_context_is_owner` and refuses
+another thread with `ERR_INVALID`; the exceptions are the queries (`grheap_heap_get`,
+`grheap_handle_get`, which answers NULL) and the options and trace functions, which
+touch no heap state. So a heap whose context has been released is unusable by
 anyone until it is acquired, and migrates with the context. The check is the
 context's atomic owner word, released and acquired by the context's own
 calls, which is what makes a hand-off free of data races under ThreadSanitizer

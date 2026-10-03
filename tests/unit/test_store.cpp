@@ -122,3 +122,14 @@ int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+TEST_F(StoreTest, StoreRangeRefusesACountWhoseByteLengthOverflows) {
+  HeapWorld w;
+  void * slot[1] = {};
+  void * value[1] = {w.heap};
+  EXPECT_EQ(grheap_store_range(w.heap, nullptr, slot, value,
+                SIZE_MAX / sizeof(void *) + 1),
+      GRHEAP_ERR_INVALID);
+  EXPECT_EQ(slot[0], nullptr);
+  EXPECT_EQ(w.stats().stores, 0u);
+}

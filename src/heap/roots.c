@@ -131,7 +131,7 @@ void * grheap_handle_get(const GRHEAP_Handle * handle) {
 }
 
 GRHEAP_Result grheap_handle_set(GRHEAP_Handle * handle, void * object) {
-  if (handle == NULL || !grheap_usable(handle->heap) ||
+  if (handle == NULL || !ready(handle->heap) ||
       !holdable(handle->heap, object)) {
     return GRHEAP_ERR_INVALID;
   }

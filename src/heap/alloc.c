@@ -133,12 +133,16 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
     if (heap->auto_collect && heap->since_collect >= heap->next_threshold) {
       grheap_collect_now(heap);
       collected = true;
+      /* The collection allocates (its mark stack), and the budget may have
+       * refused that; a refusal there is not why the cell below fails. */
+      refusals = grcore_context_memory_refusals(heap->context);
     }
     cellp = grheap_take_cell(heap, cell);
     if (cellp == NULL && !collected) {
       /* A block or a mapping could not be had: collect once, and try again.
        * What it frees may be whole blocks, handed back to the provider. */
       grheap_collect_now(heap);
+      refusals = grcore_context_memory_refusals(heap->context);
       cellp = grheap_take_cell(heap, cell);
     }
     if (cellp == NULL) {
@@ -151,8 +155,14 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   header->size = bytes;
   heap->stats.allocations++;
   heap->stats.live_objects++;
-  heap->stats.live_bytes += cell;
-  heap->since_collect += cell;
+  /* The bytes a sweep will count: a small object occupies its class's cell,
+   * which can be larger than the 16-byte-rounded cell asked for. */
+  size_t charged = cell;
+  if (cell <= GRHEAP_SMALL_CELL_MAX) {
+    (void)grheap_class_of(cell, &charged);
+  }
+  heap->stats.live_bytes += charged;
+  heap->since_collect += charged;
   *out_object = (unsigned char *)cellp + GRHEAP_HEADER_BYTES;
   return GRHEAP_OK;
 }

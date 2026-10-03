@@ -13,6 +13,16 @@
 #include <cstring>
 #include <string>
 
+#ifdef _WIN32
+/* MSYS2 has no setenv/unsetenv; the CRT's _putenv_s sets, and "NAME=" removes. */
+static int setenv(const char * n, const char * v, int) {
+  return _putenv_s(n, v);
+}
+static int unsetenv(const char * n) {
+  return _putenv_s(n, "");
+}
+#endif
+
 namespace {
 
 /* Sets or unsets an environment variable for the life of the object. */

@@ -132,7 +132,10 @@ poll, with every freed cell poisoned `0xDD`, so an object held only in a C
 variable across an allocation shows up at once. `GRHEAP_VERIFY=1` makes
 barrier-verify (abort; `count` counts) the default: the heap keeps a shadow of
 what `grheap_store*` wrote and finds a slot written some other way. Both are off
-by default, change no result, and are shown to find a planted defect by
+by default and change no result the program computes (torture does change when
+`destroy` and `cleared` run, and verify's tables are charged to the context's
+memory budget; torture collects whatever `set_auto_collect` says, and poisons
+size-class cells only, not a large object's mapping), and are shown to find a planted defect by
 `make check-dynamic-gates`.
 
 **Budgets.** Pages and metadata are charged to the context. A collection runs

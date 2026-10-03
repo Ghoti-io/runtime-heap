@@ -66,6 +66,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Barrier-verify, weak cells and the ID index read and write 64-bit slots as
+ * whole words (a raw pointer slot is a uint64_t to them). */
+_Static_assert(sizeof(void *) == 8, "weak and verify code assume 8-byte slots");
+
 /** Size classes: 32 to 128 in steps of 16, then four per doubling to 8192.
  *  (A 16-byte cell cannot exist: the header alone is 16 and a pad byte is
  *  required.) */

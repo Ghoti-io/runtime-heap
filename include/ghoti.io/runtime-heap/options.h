@@ -239,7 +239,10 @@ GRHEAP_API bool grheap_options_get_auto_collect(const GRHEAP_Options * options);
  * every allocation (before the cell is taken) and in every ACT poll. After each
  * sweep every freed cell is poisoned (every byte after its free-list link word
  * set to 0xDD), so a read through a dangling pointer sees poison even though
- * ASan cannot look inside a block. Its purpose is to find a root that is
+ * ASan cannot look inside a block. (Only cells of size-class blocks are
+ * poisoned: a large object's mapping is returned to the provider whole.)
+ * Torture overrides ::grheap_options_set_auto_collect with false: it
+ * collects whatever that setting says. Its purpose is to find a root that is
  * missing: an object kept only in a C variable across an allocation. In an
  * arena nothing is collected, so torture does nothing there.
  *
@@ -265,7 +268,9 @@ GRHEAP_API bool grheap_options_get_torture(const GRHEAP_Options * options);
  * `grheap_store*` to a slot of a heap object, and compares it with the slot
  * itself at every collection and in ::grheap_verify. A slot that differs was
  * written without passing a store: the discipline a barrier will rely on.
- * It changes no result of the heap (only its cost).
+ * It changes no result the heap computes, only its cost: the shadow table is
+ * charged to the context's memory budget, so a tight budget can refuse an
+ * allocation sooner than it would with verify off.
  *
  * @param options The object.
  * @param mode The mode.

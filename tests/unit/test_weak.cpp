@@ -466,6 +466,75 @@ TEST_F(WeakTest, ASlotThatIsNotAPayloadStartIsCountedAndCleared) {
   ASSERT_EQ(grheap_handle_destroy(hc), GRHEAP_OK);
 }
 
+TEST_F(WeakTest, EphemeronSlotsThatAreInvalidOrHaveNoKeyAreCountedAndCleared) {
+  HeapWorld w;
+  the_heap = w.heap;
+  int local = 0;
+  Node * live = target(w, 1);
+  GRHEAP_Handle * hl = hold(w, live);
+  // 1: the key is not a payload start (the value is a live object).
+  Eph * bad_key = new_eph(w, 21);
+  GRHEAP_Handle * h1 = hold(w, bad_key);
+  ASSERT_EQ(grheap_store(w.heap, bad_key, &bad_key->key, &local), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, bad_key, &bad_key->value, live), GRHEAP_OK);
+  // 2: the key is live and the value is not a payload start.
+  Eph * bad_value = new_eph(w, 22);
+  GRHEAP_Handle * h2 = hold(w, bad_value);
+  ASSERT_EQ(grheap_store(w.heap, bad_value, &bad_value->key, live), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, bad_value, &bad_value->value, &local),
+      GRHEAP_OK);
+  // 3: no key, but a value (written in the wrong order).
+  Eph * no_key = new_eph(w, 23);
+  GRHEAP_Handle * h3 = hold(w, no_key);
+  ASSERT_EQ(grheap_store(w.heap, no_key, &no_key->value, live), GRHEAP_OK);
+  events().clear();
+  uint64_t invalid_before = w.stats().invalid_pointers;
+  uint64_t cleared_before = w.stats().ephemerons_cleared;
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(bad_key->key, nullptr);
+  EXPECT_EQ(bad_key->value, nullptr);
+  EXPECT_EQ(bad_value->key, live); // the live key stays
+  EXPECT_EQ(bad_value->value, nullptr);
+  EXPECT_EQ(no_key->key, nullptr);
+  EXPECT_EQ(no_key->value, nullptr);
+  EXPECT_EQ(w.stats().invalid_pointers - invalid_before, 2u);
+  EXPECT_EQ(w.stats().ephemerons_cleared - cleared_before, 3u);
+  ASSERT_EQ(events().size(), 3u);
+  // A second collection has nothing left to clear or report.
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(events().size(), 3u);
+  EXPECT_EQ(w.stats().ephemerons_cleared - cleared_before, 3u);
+  ASSERT_EQ(grheap_handle_destroy(h3), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(h2), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(h1), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(hl), GRHEAP_OK);
+}
+
+TEST_F(WeakTest, BarrierVerifyWatchesTheEphemeronSlotsToo) {
+  WorldConfig config;
+  config.verify = GRHEAP_VERIFY_COUNT;
+  HeapWorld w(config);
+  Eph * e = new_eph(w, 20);
+  GRHEAP_Handle * he = hold(w, e);
+  Node * k = target(w, 1);
+  GRHEAP_Handle * hk = hold(w, k);
+  uint64_t violations = 99;
+  ASSERT_EQ(grheap_verify(w.heap, &violations), GRHEAP_OK);
+  EXPECT_EQ(violations, 0u);
+  e->key = k; // direct write to the key slot
+  ASSERT_EQ(grheap_verify(w.heap, &violations), GRHEAP_OK);
+  EXPECT_GE(violations, 1u);
+  e->key = nullptr;
+  e->value = k; // and to the value slot
+  ASSERT_EQ(grheap_verify(w.heap, &violations), GRHEAP_OK);
+  EXPECT_GE(violations, 1u);
+  e->value = nullptr;
+  ASSERT_EQ(grheap_verify(w.heap, &violations), GRHEAP_OK);
+  EXPECT_EQ(violations, 0u);
+  ASSERT_EQ(grheap_handle_destroy(hk), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(he), GRHEAP_OK);
+}
+
 TEST_F(WeakTest, ASpecWhoseSlotsDoNotFitThePayloadIsRefusedAtAllocation) {
   HeapWorld w;
   GRHEAP_Stats before = w.stats();
@@ -482,6 +551,20 @@ TEST_F(WeakTest, ASpecWhoseSlotsDoNotFitThePayloadIsRefusedAtAllocation) {
   const GRHEAP_Type t1 = {"m", 32, nullptr, nullptr, &misaligned};
   const GRHEAP_Type t2 = {"s", 32, nullptr, nullptr, &same};
   const GRHEAP_Type t3 = {"b", 32, nullptr, nullptr, &bad};
+  // Ephemeron slots: the value slot starting at the payload's end, and a
+  // misaligned key and value.
+  static const GRHEAP_WeakSpec at_end = {GRHEAP_EPHEMERON, 0, 0, 32, false,
+      nullptr};
+  static const GRHEAP_WeakSpec odd_key = {GRHEAP_EPHEMERON, 0, 4, 8, false,
+      nullptr};
+  static const GRHEAP_WeakSpec odd_value = {GRHEAP_EPHEMERON, 0, 0, 12, false,
+      nullptr};
+  const GRHEAP_Type t4 = {"e", 32, nullptr, nullptr, &at_end};
+  const GRHEAP_Type t5 = {"k", 32, nullptr, nullptr, &odd_key};
+  const GRHEAP_Type t6 = {"v", 32, nullptr, nullptr, &odd_value};
+  EXPECT_EQ(grheap_alloc(w.heap, &t4, &p), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(grheap_alloc(w.heap, &t5, &p), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(grheap_alloc(w.heap, &t6, &p), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_alloc(w.heap, &t1, &p), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_alloc(w.heap, &t2, &p), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_alloc(w.heap, &t3, &p), GRHEAP_ERR_INVALID);

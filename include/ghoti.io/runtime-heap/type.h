@@ -112,7 +112,10 @@ typedef enum {
  * cleared. An `encoded` slot whose word fails the codec's tag test is an
  * immediate value: it is left alone, and an ephemeron whose key is an
  * immediate keeps its value for as long as the ephemeron lives. Set an
- * ephemeron's key before its value: a value with a NULL key is cleared.
+ * ephemeron's key before its value: a value with a NULL key is cleared. (That
+ * holds for raw-pointer slots. In an `encoded` slot a word that fails the tag
+ * test is not a pointer but an immediate, which never dies, so an ephemeron
+ * keyed by one keeps its value.)
  *
  * `cleared` is plain C, runs no guest code and may not allocate in the heap
  * (refused with ::GRHEAP_ERR_INVALID). It cannot resurrect anything (AD-12).

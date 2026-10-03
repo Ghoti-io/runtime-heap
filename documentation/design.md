@@ -318,7 +318,9 @@ A collection finds a missing root only if something then *reads* the freed
 object, and a freed cell still lives inside a mapped block, so ASan reports
 nothing. So after each sweep every freed cell is **poisoned**: every byte after
 its free-list link word becomes `0xDD`. (The link word is the cell's type word;
-a cell on a free list has no type, so there is nothing else to clear.) A read
+a cell on a free list has no type, so there is nothing else to clear.) Only
+cells of size-class blocks are poisoned: a large object's mapping is returned
+to the provider whole, so a dangling read of one faults instead. A read
 through a dangling pointer then sees `0xDDDDDDDDDDDDDDDD`, which no valid
 payload holds, and `check-dynamic-gates` requires exactly that.
 
@@ -330,7 +332,10 @@ the block mapped, and the next allocation is of another class so it does not
 reuse the cell (a reused cell is zeroed, which would still fail the program's
 check but would not show the instrument working).
 
-An arena never collects, so torture does nothing there. A heap is "tortured"
+Torture collects whatever `set_auto_collect` says. Poison and torture change no
+result the program computes, but torture changes *when* `destroy` and `cleared`
+run and the collection counters, and verify's shadow is charged to the
+context's memory budget. An arena never collects, so torture does nothing there. A heap is "tortured"
 only in collected mode; the statistic `torture_collections` counts the
 collections torture made, a subset of `collections`.
 
@@ -376,8 +381,9 @@ The shadow of a dead object is removed in the sweep before its `destroy` hook
 runs, so a cell that comes back as another type, with its traced slots
 elsewhere, is not blamed for the old occupant. If the table cannot grow, the
 heap stops trusting it (`grheap_verify` says `ERR_OOM`) instead of reading an
-absent entry as a bypass. Verify changes no result the heap computes; a test
-runs one program with it on and off and compares what is left.
+absent entry as a bypass. Verify changes no result the heap computes, though its
+tables are charged to the context's memory budget; a test runs one program with
+it on and off and compares what is left.
 
 What it does not do: it sees a bypass only at the next walk (not at the write,
 which is a plain store the heap is never called for), and a slot not reported by
@@ -522,7 +528,8 @@ target that an ephemeron value was about to keep. A pinned or conservatively
 found target is marked and so stays. A slot that is not NULL and does not
 decode to a live payload start is counted in `invalid_pointers` and cleared; an
 encoded word that fails the tag test is an immediate and left alone (an
-ephemeron keyed by an immediate keeps its value).
+ephemeron keyed by an immediate keeps its value, so "a value with a NULL key is
+cleared" holds for raw-pointer slots only).
 
 The queue is not a separate structure. The registry entry of each cell has a
 `pending` flag; the collector sets it while clearing and the callbacks pass

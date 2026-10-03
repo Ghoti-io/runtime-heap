@@ -83,7 +83,7 @@ build() {
   src="$DIR/$name.c"
   out="$work/$name-$which"
   # shellcheck disable=SC2086
-  if ! $CC ${CFLAGS:-} $INCLUDE $define -o "$out" "$src" $LIBS \
+  if ! $CC ${CFLAGS:-} ${INCLUDE:-} $define -o "$out" "$src" $LIBS \
       >"$work/$name-$which.log" 2>&1; then
     fail "could not build $src ($which):
 $(cat "$work/$name-$which.log")"

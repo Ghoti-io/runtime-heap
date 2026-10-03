@@ -1,0 +1,7 @@
+Name: Ghoti.io Runtime-heap(BRANCH)
+Description: The language runtime stack's collector: a precise, non-moving, stop-the-world mark and sweep heap attached to a runtime-core context.
+Version: (VERSION)
+URL: https://github.com/Ghoti-io/runtime-heap
+Libs: -L(PC_LIB_DIR) -l(SUITE)-(PROJECT)(BRANCH) -pthread
+CFlags: -I(PC_INCLUDE_DIR)
+Requires: (REQUIRES)

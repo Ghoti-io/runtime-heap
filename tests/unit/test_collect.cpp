@@ -37,7 +37,7 @@ class CollectTest : public ::testing::Test {
 };
 
 TEST_F(CollectTest, CyclicGarbageIsFreedAndEachHookRunsOnce) {
-  HeapWorld w;
+  HeapWorld w(steady());
   make_cycle(w.heap);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_EQ(destroyed_count(1), 1u);
@@ -52,7 +52,7 @@ TEST_F(CollectTest, CyclicGarbageIsFreedAndEachHookRunsOnce) {
 }
 
 TEST_F(CollectTest, ACycleKeptByARegisteredRootSlotSurvivesUntilTheSlotIsRemoved) {
-  HeapWorld w;
+  HeapWorld w(steady());
   void * root = nullptr;
   ASSERT_EQ(grheap_root_add(w.heap, &root), GRHEAP_OK);
   Cycle c = make_cycle(w.heap);
@@ -69,7 +69,7 @@ TEST_F(CollectTest, ACycleKeptByARegisteredRootSlotSurvivesUntilTheSlotIsRemoved
 }
 
 TEST_F(CollectTest, ACycleKeptByAHandleSurvivesUntilTheHandleIsDestroyed) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Cycle c = make_cycle(w.heap);
   GRHEAP_Handle * h;
   ASSERT_EQ(grheap_handle_create(w.heap, c.b, &h), GRHEAP_OK);
@@ -82,7 +82,7 @@ TEST_F(CollectTest, ACycleKeptByAHandleSurvivesUntilTheHandleIsDestroyed) {
 }
 
 TEST_F(CollectTest, ACycleKeptByAPinSurvivesUntilItIsUnpinned) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Cycle c = make_cycle(w.heap);
   ASSERT_EQ(grheap_pin(w.heap, c.a), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
@@ -93,7 +93,7 @@ TEST_F(CollectTest, ACycleKeptByAPinSurvivesUntilItIsUnpinned) {
 }
 
 TEST_F(CollectTest, ACycleKeptByARootSourceSlotSurvivesUntilTheSourceIsRemoved) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Cycle c = make_cycle(w.heap);
   uint64_t slot = addr(c.a);
   HeldRoots held;
@@ -109,7 +109,7 @@ TEST_F(CollectTest, ACycleKeptByARootSourceSlotSurvivesUntilTheSourceIsRemoved) 
 }
 
 TEST_F(CollectTest, OnlyWhatIsUnreachableIsFreed) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * keep = new_node(w.heap, 1);
   Node * child = new_node(w.heap, 2);
   Node * orphan = new_node(w.heap, 3);
@@ -131,7 +131,7 @@ TEST_F(CollectTest, OnlyWhatIsUnreachableIsFreed) {
 }
 
 TEST_F(CollectTest, ALeafObjectsBytesAreNotScannedForPointers) {
-  HeapWorld w;
+  HeapWorld w(steady());
   void * victim = nullptr;
   ASSERT_EQ(grheap_alloc(w.heap, &kPlainNode, &victim), GRHEAP_OK);
   void * leaf = nullptr;
@@ -145,13 +145,14 @@ TEST_F(CollectTest, ALeafObjectsBytesAreNotScannedForPointers) {
 }
 
 TEST_F(CollectTest, ADeepChainIsMarkedWithoutRecursionAndCollectedAfterRelease) {
-  HeapWorld w;
+  HeapWorld w(steady());
   constexpr uint64_t kLength = 100000;
   void * head = nullptr; // a registered root: auto collections run as it grows
   ASSERT_EQ(grheap_root_add(w.heap, &head), GRHEAP_OK);
   for (uint64_t i = 0; i < kLength; i++) {
     Node * n = new_node(w.heap, i);
-    n->a = head; // n is unreachable until the next line; nothing allocates
+    // n is unreachable until the next line; nothing allocates
+    ASSERT_EQ(grheap_store(w.heap, n, &n->a, head), GRHEAP_OK);
     head = n;
   }
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
@@ -193,7 +194,7 @@ TEST_F(CollectTest, TheThresholdIsAnOptionAndASmallOneCollectsSooner) {
 TEST_F(CollectTest, WithAutoCollectOffAllocationNeverCollectsOnItsOwn) {
   WorldConfig config;
   config.auto_collect = false;
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   for (int i = 0; i < 20000; i++) {
     new_node(w.heap, 0, &kPlainNode);
   }
@@ -206,13 +207,13 @@ TEST_F(CollectTest, WithAutoCollectOffAllocationNeverCollectsOnItsOwn) {
 }
 
 TEST_F(CollectTest, AfterACollectionTheThresholdIsAtLeastTheLiveBytes) {
-  HeapWorld w;
+  HeapWorld w(steady());
   // About 720,000 live bytes, kept by a root.
   void * head = nullptr;
   ASSERT_EQ(grheap_root_add(w.heap, &head), GRHEAP_OK);
   for (int i = 0; i < 15000; i++) {
     Node * n = new_node(w.heap, static_cast<uint64_t>(i), &kPlainNode);
-    n->a = head;
+    ASSERT_EQ(grheap_store(w.heap, n, &n->a, head), GRHEAP_OK);
     head = n;
   }
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
@@ -255,8 +256,8 @@ TEST_F(CollectTest, AFreedCellIsReusedAndComesBackZeroFilled) {
   GRHEAP_Handle * h;
   ASSERT_EQ(grheap_handle_create(w.heap, keep, &h), GRHEAP_OK);
   Node * dead = new_node(w.heap, 2);
-  dead->a = dead;
-  dead->b = keep;
+  ASSERT_EQ(grheap_store(w.heap, dead, &dead->a, dead), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, dead, &dead->b, keep), GRHEAP_OK);
   memset(&dead->id, 0xEE, sizeof dead->id);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_FALSE(grheap_contains(w.heap, dead));

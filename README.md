@@ -11,8 +11,11 @@ engine at all, and for a language engine on the shared runtime.
 
 Nothing is released. So far there is the collector (allocation by size class,
 the mark and sweep, the value codec, registered root slots, handles, pins and
-`gc_store`), an arena mode, and the build, gates and benchmark harness. Weak
-cells, stable IDs, GC torture and barrier-verify come later.
+`gc_store`), an arena mode, weak cells and ephemerons, stable IDs and an identity
+hash, the two verification instruments (GC torture and barrier-verify), the
+barrier contract (written in [documentation/design.md](documentation/design.md),
+unshared variant implemented, shared variant designed), CI, and the build, gates
+and benchmark harness.
 
 ## Example
 
@@ -25,7 +28,7 @@ static void node_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &((Node *)payload)->peer);
 }
 
-static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL};
+static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL};
 
 int main(void) {
   GRCORE_Group * group;
@@ -75,8 +78,10 @@ this library:
 | `check-labels` | fail if a public header has no `@stability stable` label (every header here is `stable`) |
 | `check-edges` | fail on any `#include` or shared-object dependency on a Ghoti library other than `cutil`, `runtime-core` and this one, and on any include of `runtime-core`'s A headers or its umbrella |
 | `check-gates` | run each gate against a planted defect and a control, and against an empty tree, and fail unless each behaves |
+| `check-dynamic-gates` | build two small programs twice (a control and a planted defect: a missing root, a missing store) and require that GC torture and barrier-verify fail the planted one, pass the control, and that the defect passes unseen when the instrument is off |
 | `bench` | run the benchmark harness in full; it prints a calibration result first |
 | `test-asan`, `test-tsan`, `test-valgrind-quiet` | the same tests under ASan+UBSan, ThreadSanitizer and Valgrind |
+| `test-torture` | the ASan+UBSan build, every unit test with `GRHEAP_TORTURE=1 GRHEAP_VERIFY=1` (a collection at every allocation, freed cells poisoned, every store checked) |
 | `coverage` | instrumented run and line report; `COVERAGE_MIN=80` fails below the floor |
 
 ## The API
@@ -87,10 +92,11 @@ them all and includes nothing from `runtime-core`'s A.
 
 | Header | Holds |
 | --- | --- |
-| `options.h` | `GRHEAP_Options`: opaque, set through setters. The mode (collected or arena), the value codec, the allocation threshold, and whether allocation may collect |
-| `type.h` | `GRHEAP_Type` (name, default size, `trace`, `destroy`) and the two functions a `trace` calls: `grheap_trace_slot` for a raw pointer, `grheap_trace_word` for an encoded value |
+| `options.h` | `GRHEAP_Options`: opaque, set through setters. The mode (collected or arena), the value codec, the allocation threshold, whether allocation may collect, and the two instruments (`set_torture`, `set_verify`) |
+| `type.h` | `GRHEAP_Type` (name, default size, `trace`, `destroy`, an optional `GRHEAP_WeakSpec` for a weak cell or ephemeron) and the two functions a `trace` calls: `grheap_trace_slot` for a raw pointer, `grheap_trace_word` for an encoded value |
 | `heap.h` | `GRHEAP_Heap`: `grheap_heap_create` (attaches to a context), `grheap_alloc`, `grheap_alloc_sized`, `grheap_collect`, `grheap_arena_reset`, `grheap_contains`, `grheap_type_of`, `grheap_size_of`, `grheap_stats` |
-| `store.h` | `grheap_store`, `grheap_store_range`, `grheap_store_word`: the only sanctioned pointer stores into heap objects |
+| `store.h` | `grheap_store`, `grheap_store_range`, `grheap_store_word`: the only sanctioned pointer stores into heap objects; and `grheap_verify`, which compares every traced slot with what the stores wrote |
+| `id.h` | `grheap_id_of`, `grheap_object_of_id`, `grheap_identity_hash`: stable IDs (monotonic from 1, never reused, held weakly) and a hash that is a function of the ID |
 | `roots.h` | `grheap_root_add`/`remove` (a C variable as a root), `GRHEAP_Handle`, and counted `grheap_pin`/`unpin` |
 
 **Who owns what.** The heap owns every object it returns and a caller never
@@ -112,6 +118,22 @@ handles, the pinned objects, and then whatever the context's root sources
 report. A precise slot must name the exact start of a live payload or it is
 counted in `invalid_pointers` and skipped; a conservative range may hold
 interior and one-past-the-end pointers, which keep their object alive.
+
+**Weak cells and ephemerons.** A type with a `GRHEAP_WeakSpec` has a slot the
+collector does not trace. After marking, the collector marks the value of every
+ephemeron whose key is marked (to a fixpoint), sets the weak slot of every cell
+whose target is unmarked to NULL, and after the sweep calls each affected
+cell's `cleared(payload)` once. [examples/weak_and_ids.c](examples/weak_and_ids.c)
+shows it.
+
+**Instruments.** `GRHEAP_TORTURE=1` makes torture the default of every new
+options object: a collection at the start of every allocation and in every ACT
+poll, with every freed cell poisoned `0xDD`, so an object held only in a C
+variable across an allocation shows up at once. `GRHEAP_VERIFY=1` makes
+barrier-verify (abort; `count` counts) the default: the heap keeps a shadow of
+what `grheap_store*` wrote and finds a slot written some other way. Both are off
+by default, change no result, and are shown to find a planted defect by
+`make check-dynamic-gates`.
 
 **Budgets.** Pages and metadata are charged to the context. A collection runs
 when the bytes allocated since the last reach the threshold, once more when a

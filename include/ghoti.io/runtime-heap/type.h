@@ -28,7 +28,9 @@
  * object layout and no value encoding: a type names the object, says how big
  * it is by default, and optionally supplies a `trace` function that reports
  * each pointer slot of a payload, and a `destroy` function that releases
- * whatever the payload owns outside the heap.
+ * whatever the payload owns outside the heap. A type may also say that one
+ * slot of its payload is a *weak cell* or a pair of slots an *ephemeron*
+ * (::GRHEAP_WeakSpec), which the heap then handles itself.
  */
 
 #ifndef GHOTI_IO_GRHEAP_TYPE_H
@@ -36,6 +38,7 @@
 
 #include <ghoti.io/runtime-heap/macros.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -77,6 +80,54 @@ typedef void (*GRHEAP_TraceFn)(GRHEAP_Tracer * tracer, void * payload);
  */
 typedef void (*GRHEAP_DestroyFn)(void * payload);
 
+/** @brief What a weak spec describes. */
+typedef enum {
+  /** One slot, `target_offset`, that does not keep its target alive. */
+  GRHEAP_WEAK_CELL = 0,
+  /**
+   * Two slots, `key_offset` and `value_offset`. The value is kept alive only
+   * while the key is reachable by some other path (an ephemeron).
+   */
+  GRHEAP_EPHEMERON
+} GRHEAP_WeakKind;
+
+/**
+ * @brief Tells the heap that a type has a weak cell or an ephemeron.
+ *
+ * The type's `trace` function must not report these slots: the heap handles
+ * them. Every offset is in bytes from the start of the payload, 8-byte aligned,
+ * and must lie inside the payload of every object allocated (a refusal with
+ * ::GRHEAP_ERR_INVALID otherwise, at allocation). Write the slots with
+ * ::grheap_store (or ::grheap_store_word when `encoded`) like any other.
+ *
+ * Collection, after marking: (1) for each live ephemeron whose key is marked,
+ * the value is marked too, to a fixpoint; (2) each live weak cell whose target
+ * is not marked has the slot set to NULL (word 0), and each live ephemeron
+ * whose key is not marked has key and value set to NULL; (3) the sweep runs;
+ * (4) then `cleared(payload)` is called once for every cell or ephemeron that
+ * had a slot cleared, with the heap busy. A cell that is itself dead is
+ * dropped without a call. A target that is pinned, or that a conservative
+ * range found, is marked and so stays. A slot that is not NULL and does not
+ * decode to the start of a live payload is counted in `invalid_pointers` and
+ * cleared. An `encoded` slot whose word fails the codec's tag test is an
+ * immediate value: it is left alone, and an ephemeron whose key is an
+ * immediate keeps its value for as long as the ephemeron lives. Set an
+ * ephemeron's key before its value: a value with a NULL key is cleared.
+ *
+ * `cleared` is plain C, runs no guest code and may not allocate in the heap
+ * (refused with ::GRHEAP_ERR_INVALID). It cannot resurrect anything (AD-12).
+ *
+ * In an arena nothing is ever collected, so nothing is cleared.
+ */
+typedef struct GRHEAP_WeakSpec {
+  GRHEAP_WeakKind kind;     ///< Weak cell or ephemeron.
+  size_t target_offset;     ///< GRHEAP_WEAK_CELL: the weak slot.
+  size_t key_offset;        ///< GRHEAP_EPHEMERON: the key slot.
+  size_t value_offset;      ///< GRHEAP_EPHEMERON: the value slot.
+  bool encoded;             ///< Slots hold codec-encoded words, not pointers.
+  void (*cleared)(void * payload); ///< Called after the sweep. May be NULL.
+} GRHEAP_WeakSpec;
+
 /**
  * @brief A type descriptor. Define it `static` (or `const`) and allocate by
  *   address; it must outlive every object allocated with it.
@@ -86,6 +137,7 @@ typedef struct GRHEAP_Type {
   size_t size;            ///< Payload bytes ::grheap_alloc allocates.
   GRHEAP_TraceFn trace;   ///< Reports pointer slots. NULL: a leaf object.
   GRHEAP_DestroyFn destroy; ///< Releases external resources. May be NULL.
+  const GRHEAP_WeakSpec * weak; ///< A weak cell or ephemeron. May be NULL.
 } GRHEAP_Type;
 
 /**

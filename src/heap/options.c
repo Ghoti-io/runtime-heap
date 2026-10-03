@@ -28,6 +28,28 @@
 
 #include "heap_internal.h"
 
+#include <stdlib.h>
+#include <string.h>
+
+bool grheap_env_torture(void) {
+  const char * v = getenv("GRHEAP_TORTURE");
+  return v != NULL && strcmp(v, "1") == 0;
+}
+
+GRHEAP_Verify grheap_env_verify(void) {
+  const char * v = getenv("GRHEAP_VERIFY");
+  if (v == NULL) {
+    return GRHEAP_VERIFY_OFF;
+  }
+  if (strcmp(v, "1") == 0) {
+    return GRHEAP_VERIFY_ABORT;
+  }
+  if (strcmp(v, "count") == 0) {
+    return GRHEAP_VERIFY_COUNT;
+  }
+  return GRHEAP_VERIFY_OFF;
+}
+
 void grheap_value_codec_default(GRHEAP_ValueCodec * codec) {
   if (codec == NULL) {
     return;
@@ -56,6 +78,8 @@ GRHEAP_Result grheap_options_create(
   grheap_value_codec_default(&o->codec);
   o->threshold = GRHEAP_DEFAULT_GC_THRESHOLD;
   o->auto_collect = true;
+  o->torture = grheap_env_torture();
+  o->verify = grheap_env_verify();
   *out_options = o;
   return GRHEAP_OK;
 }
@@ -123,4 +147,32 @@ GRHEAP_Result grheap_options_set_auto_collect(
 
 bool grheap_options_get_auto_collect(const GRHEAP_Options * options) {
   return options == NULL ? true : options->auto_collect;
+}
+
+GRHEAP_Result grheap_options_set_torture(
+    GRHEAP_Options * options, bool enabled) {
+  if (options == NULL) {
+    return GRHEAP_ERR_INVALID;
+  }
+  options->torture = enabled;
+  return GRHEAP_OK;
+}
+
+bool grheap_options_get_torture(const GRHEAP_Options * options) {
+  return options == NULL ? false : options->torture;
+}
+
+GRHEAP_Result grheap_options_set_verify(
+    GRHEAP_Options * options, GRHEAP_Verify mode) {
+  if (options == NULL ||
+      (mode != GRHEAP_VERIFY_OFF && mode != GRHEAP_VERIFY_COUNT &&
+          mode != GRHEAP_VERIFY_ABORT)) {
+    return GRHEAP_ERR_INVALID;
+  }
+  options->verify = mode;
+  return GRHEAP_OK;
+}
+
+GRHEAP_Verify grheap_options_get_verify(const GRHEAP_Options * options) {
+  return options == NULL ? GRHEAP_VERIFY_OFF : options->verify;
 }

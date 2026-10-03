@@ -26,8 +26,11 @@
  * Every library ships one from its first commit, so that "performant" is a
  * claim with a way to check it. Besides the calibration case it holds the
  * cases of the collector: allocating a small object, allocating a 1 KiB
- * object, one full mark and sweep of a 10,000-node graph, and a
- * `grheap_store`.
+ * object, one full mark and sweep of a 10,000-node graph, a `grheap_store`,
+ * a collection that clears 1,000 weak cells, and a stable-ID lookup. Every
+ * world is made with GC torture and barrier-verify off, whatever the
+ * environment says: a figure is a baseline, and a tortured run is read against
+ * it.
  *
  * The calibration case is a fixed amount of integer work that touches no
  * library code, run the same way every real case will be, so a figure from a
@@ -54,6 +57,7 @@
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,9 +115,18 @@ static void world_open(World * w) {
   if (grcore_context_create(w->group, NULL, &w->context) != GRCORE_OK) {
     setup_failed("context create");
   }
-  if (grheap_heap_create(w->context, NULL, &w->heap) != GRHEAP_OK) {
+  /* The instruments are off by name, not by default: GRHEAP_TORTURE in the
+   * environment would otherwise turn a baseline into a stress run. */
+  GRHEAP_Options * options;
+  if (grheap_options_create(NULL, &options) != GRHEAP_OK ||
+      grheap_options_set_torture(options, false) != GRHEAP_OK ||
+      grheap_options_set_verify(options, GRHEAP_VERIFY_OFF) != GRHEAP_OK) {
+    setup_failed("options");
+  }
+  if (grheap_heap_create(w->context, options, &w->heap) != GRHEAP_OK) {
     setup_failed("heap create");
   }
+  grheap_options_destroy(options);
 }
 
 static void world_close(World * w) {
@@ -133,8 +146,8 @@ static void node_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &n->other);
 }
 
-static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL};
-static const GRHEAP_Type leaf_type = {"leaf", 16, NULL, NULL};
+static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL};
+static const GRHEAP_Type leaf_type = {"leaf", 16, NULL, NULL, NULL};
 
 /* A small object, unreachable as soon as it is made: the price of an
  * allocation including the collections it triggers, the way a program that
@@ -236,12 +249,116 @@ static uint64_t store_run(uint64_t iterations) {
   return sink;
 }
 
+#define WEAK_CELLS 1000u
+
+typedef struct {
+  void * next;   /* strong: the list of cells */
+  void * target; /* weak */
+} WeakCell;
+
+static void weak_cell_trace(GRHEAP_Tracer * tracer, void * payload) {
+  grheap_trace_slot(tracer, &((WeakCell *)payload)->next);
+}
+
+static const GRHEAP_WeakSpec weak_spec = {
+    GRHEAP_WEAK_CELL, offsetof(WeakCell, target), 0, 0, false, NULL};
+static const GRHEAP_Type weak_cell_type = {
+    "weak-cell", sizeof(WeakCell), weak_cell_trace, NULL, &weak_spec};
+
+/* One collection that clears 1,000 weak cells: the targets are made and
+ * stored, nothing else holds them, and the collection finds them dead, nulls
+ * the slots and walks the registry. An iteration is one such collection, so a
+ * figure divided by 1,000 is the cost of clearing one cell. */
+static uint64_t weak_clear_run(uint64_t iterations) {
+  World w;
+  world_open(&w);
+  void * head = NULL;
+  if (grheap_root_add(w.heap, &head) != GRHEAP_OK) {
+    setup_failed("root add");
+  }
+  WeakCell * cells[WEAK_CELLS];
+  for (uint32_t i = 0; i < WEAK_CELLS; i++) {
+    void * p;
+    if (grheap_alloc(w.heap, &weak_cell_type, &p) != GRHEAP_OK) {
+      setup_failed("alloc weak cell");
+    }
+    WeakCell * c = p;
+    c->next = head;
+    head = p;
+    cells[i] = c;
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    for (uint32_t k = 0; k < WEAK_CELLS; k++) {
+      void * t;
+      if (grheap_alloc(w.heap, &leaf_type, &t) != GRHEAP_OK) {
+        setup_failed("alloc target");
+      }
+      if (grheap_store(w.heap, cells[k], &cells[k]->target, t) != GRHEAP_OK) {
+        setup_failed("store target");
+      }
+    }
+    if (grheap_collect(w.heap) != GRHEAP_OK) {
+      setup_failed("collect");
+    }
+    GRHEAP_Stats s;
+    grheap_stats(w.heap, &s);
+    sink += s.weak_cleared;
+  }
+  world_close(&w);
+  return sink;
+}
+
+#define ID_OBJECTS 10000u
+
+/* A stable-ID lookup: the object-to-ID direction, an open-addressing probe,
+ * for an object that already has its ID. An iteration is one lookup. */
+static uint64_t id_lookup_run(uint64_t iterations) {
+  World w;
+  world_open(&w);
+  void * head = NULL;
+  if (grheap_root_add(w.heap, &head) != GRHEAP_OK) {
+    setup_failed("root add");
+  }
+  void * nodes[ID_OBJECTS];
+  for (uint32_t i = 0; i < ID_OBJECTS; i++) {
+    void * p;
+    if (grheap_alloc(w.heap, &node_type, &p) != GRHEAP_OK) {
+      setup_failed("alloc node");
+    }
+    Node * n = p;
+    n->next = head;
+    head = p;
+    nodes[i] = p;
+    uint64_t id;
+    if (grheap_id_of(w.heap, p, &id) != GRHEAP_OK) {
+      setup_failed("id of");
+    }
+  }
+  uint64_t seed = 88172645463325252ull;
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    uint64_t id;
+    if (grheap_id_of(w.heap, nodes[seed % ID_OBJECTS], &id) != GRHEAP_OK) {
+      setup_failed("id of");
+    }
+    sink += id;
+  }
+  world_close(&w);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"alloc-small", alloc_small_run, 20u * 1000u * 1000u, 100000u},
     {"alloc-1k", alloc_1k_run, 2u * 1000u * 1000u, 10000u},
     {"mark-sweep-10k", mark_sweep_run, 2000u, 3u},
     {"store", store_run, 200u * 1000u * 1000u, 100000u},
+    {"weak-clear-1k", weak_clear_run, 20000u, 3u},
+    {"id-lookup", id_lookup_run, 50u * 1000u * 1000u, 100000u},
 };
 
 #define REPEATS 7

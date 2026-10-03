@@ -22,14 +22,14 @@ void boxed_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_word(t, &static_cast<Boxed *>(payload)->word);
 }
 
-const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr};
+const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr};
 
 /* A payload holding one raw slot, whatever it contains. */
 void slotted_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, static_cast<void **>(payload));
 }
 
-const GRHEAP_Type kSlotted = {"slotted", 16, slotted_trace, nullptr};
+const GRHEAP_Type kSlotted = {"slotted", 16, slotted_trace, nullptr, nullptr};
 
 void add_source(HeapWorld & w, HeldRoots & held) {
   ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kHeldSource, &held),
@@ -50,7 +50,7 @@ TEST_F(MarkTest, ATaggedWordMarksItsObjectAndAnUntaggedOneIsNotAPointer) {
   config.codec_set = true;
   // A pointer p is the word (p << 1) | 1; a clear tag bit is an integer.
   config.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   Node * tagged = new_node(w.heap, 1);
   Node * plain = new_node(w.heap, 2);
   uint64_t tagged_word = (addr(tagged) << 1) | 1u;
@@ -72,7 +72,7 @@ TEST_F(MarkTest, TheCodecsMaskAndShiftDecodeAWordToAnAddress) {
   WorldConfig config;
   config.codec_set = true;
   config.codec = GRHEAP_ValueCodec{0, 0, UINT64_C(0x00FFFFFFFFFFFFFF), 2, 0};
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   Node * n = new_node(w.heap, 1);
   Node * other = new_node(w.heap, 2);
   uint64_t word = (addr(n) << 2) | (UINT64_C(0xAB) << 56);
@@ -95,7 +95,7 @@ TEST_F(MarkTest, ABaseIsAddedAfterTheShift) {
   WorldConfig config;
   config.codec_set = true;
   config.codec = GRHEAP_ValueCodec{0, 0, UINT64_MAX, 4, kBase};
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   Node * n = new_node(w.heap, 1);
   Node * other = new_node(w.heap, 2);
   uint64_t offset = (addr(n) - kBase) << 4;
@@ -113,20 +113,21 @@ TEST_F(MarkTest, TraceWordDecodesWithTheHeapsCodecToo) {
   WorldConfig config;
   config.codec_set = true;
   config.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   void * outer_p;
   ASSERT_EQ(grheap_alloc(w.heap, &kBoxed, &outer_p), GRHEAP_OK);
   auto * outer = static_cast<Boxed *>(outer_p);
   Node * inner = new_node(w.heap, 1);
   Node * stray = new_node(w.heap, 2);
-  outer->word = (addr(inner) << 1) | 1u;
+  ASSERT_EQ(grheap_store_word(w.heap, outer, &outer->word, (addr(inner) << 1) | 1u),
+      GRHEAP_OK);
   GRHEAP_Handle * h;
   ASSERT_EQ(grheap_handle_create(w.heap, outer, &h), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_TRUE(grheap_contains(w.heap, inner));
   EXPECT_FALSE(grheap_contains(w.heap, stray));
   // An integer in the slot is ignored, and frees what it used to hold.
-  outer->word = 42u << 1;
+  ASSERT_EQ(grheap_store_word(w.heap, outer, &outer->word, 42u << 1), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_FALSE(grheap_contains(w.heap, inner));
   EXPECT_EQ(w.stats().invalid_pointers, 0u);
@@ -150,7 +151,7 @@ TEST_F(MarkTest, WithTheIdentityCodecEveryWordIsAPointerAndAnIntegerIsInvalid) {
 /* ---- Precise slots against conservative ranges ------------------------ */
 
 TEST_F(MarkTest, APreciseSlotMustBeAPayloadStartOrItIsSkippedAndCounted) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * interior = new_node(w.heap, 1);
   Node * past_end = new_node(w.heap, 2);
   Node * exact = new_node(w.heap, 3);
@@ -169,7 +170,7 @@ TEST_F(MarkTest, APreciseSlotMustBeAPayloadStartOrItIsSkippedAndCounted) {
 }
 
 TEST_F(MarkTest, AConservativeRangeAcceptsInteriorAndOnePastEndPointers) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * obj = new_node(w.heap, 1);
   Node * unrelated = new_node(w.heap, 2);
   uint64_t words[] = {addr(obj) + 8,                // interior
@@ -234,7 +235,7 @@ TEST_F(MarkTest, APointerOneAfterThePayloadNeverLandsOnTheNextObject) {
   // AD-11: objects are padded so a one-past-the-end pointer stays inside its
   // own object. Lay down a run of equal objects, point one past the end of
   // one, and require that that object alone survives.
-  HeapWorld w;
+  HeapWorld w(steady());
   const size_t sizes[] = {0, 1, 15, 16, 17, 31, 32, 100, 1000, 4000};
   for (size_t size : sizes) {
     for (size_t pick : {size_t(0), size_t(11), size_t(23)}) {
@@ -263,7 +264,7 @@ TEST_F(MarkTest, APointerOneAfterThePayloadNeverLandsOnTheNextObject) {
 }
 
 TEST_F(MarkTest, AConservativeRangeUsesItsOwnMaskShiftAndBase) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * obj = new_node(w.heap, 1);
   Node * other = new_node(w.heap, 2);
   uint64_t words[] = {(addr(obj) << 3) | 5u, addr(other)};
@@ -304,7 +305,7 @@ TEST_F(MarkTest, ARangeThatIsEmptyUnalignedOrHasABadShiftIsHarmless) {
 TEST_F(MarkTest, AConservativeWordAtAFreedCellOrAnUnusedCellIsNotAHit) {
   WorldConfig config;
   config.auto_collect = false;
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   Node * keep = new_node(w.heap, 1);
   Node * freed = new_node(w.heap, 2);
   GRHEAP_Handle * h;
@@ -341,7 +342,7 @@ TEST_F(MarkTest, ARangeOverARealStackBufferThatHoldsAPointerKeepsItsObject) {
 }
 
 TEST_F(MarkTest, TraceSlotAcceptsNullAndCountsAnythingElseThatIsNotAPayloadStart) {
-  HeapWorld w;
+  HeapWorld w(steady());
   void * holder_p;
   ASSERT_EQ(grheap_alloc(w.heap, &kSlotted, &holder_p), GRHEAP_OK);
   void ** slot = static_cast<void **>(holder_p);
@@ -351,18 +352,19 @@ TEST_F(MarkTest, TraceSlotAcceptsNullAndCountsAnythingElseThatIsNotAPayloadStart
   EXPECT_EQ(w.stats().invalid_pointers, 0u); // NULL is allowed
 
   int local = 0;
-  *slot = &local;
+  ASSERT_EQ(grheap_store(w.heap, holder_p, slot, &local), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_EQ(w.stats().invalid_pointers, 1u);
 
   Node * n = new_node(w.heap, 1);
-  *slot = reinterpret_cast<char *>(n) + 8; // interior
+  ASSERT_EQ(grheap_store(w.heap, holder_p, slot, reinterpret_cast<char *>(n) + 8),
+      GRHEAP_OK); // interior
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_EQ(w.stats().invalid_pointers, 2u);
   EXPECT_FALSE(grheap_contains(w.heap, n));
 
   Node * m = new_node(w.heap, 2);
-  *slot = m;
+  ASSERT_EQ(grheap_store(w.heap, holder_p, slot, m), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_EQ(w.stats().invalid_pointers, 2u);
   EXPECT_TRUE(grheap_contains(w.heap, m));
@@ -375,7 +377,7 @@ TEST_F(MarkTest, TraceSlotAcceptsNullAndCountsAnythingElseThatIsNotAPayloadStart
 /* ---- A mark stack that cannot grow ------------------------------------- */
 
 TEST_F(MarkTest, WhenTheMarkStackCannotGrowTheOverflowRescanStillMarksEverything) {
-  HeapWorld w;
+  HeapWorld w(steady());
   // A tree with sharing and a back edge, 1500 nodes, plus unreachable nodes
   // that point into it.
   constexpr size_t kTree = 1500;
@@ -386,19 +388,22 @@ TEST_F(MarkTest, WhenTheMarkStackCannotGrowTheOverflowRescanStillMarksEverything
   }
   for (size_t i = 0; i < kTree; i++) {
     if (2 * i + 1 < kTree) {
-      tree[i]->a = tree[2 * i + 1];
+      ASSERT_EQ(grheap_store(w.heap, tree[i], &tree[i]->a, tree[2 * i + 1]),
+          GRHEAP_OK);
     }
     if (2 * i + 2 < kTree) {
-      tree[i]->b = tree[2 * i + 2];
+      ASSERT_EQ(grheap_store(w.heap, tree[i], &tree[i]->b, tree[2 * i + 2]),
+          GRHEAP_OK);
     }
   }
-  tree[kTree - 1]->a = tree[0]; // a cycle back to the root
+  ASSERT_EQ(grheap_store(w.heap, tree[kTree - 1], &tree[kTree - 1]->a, tree[0]),
+      GRHEAP_OK); // a cycle back to the root
   void * root = tree[0];
   ASSERT_EQ(grheap_root_add(w.heap, &root), GRHEAP_OK);
   for (size_t i = 0; i < kGarbage; i++) {
     Node * g = new_node(w.heap, 100000 + i);
-    g->a = tree[i % kTree];
-    g->b = g; // and a cycle of its own
+    ASSERT_EQ(grheap_store(w.heap, g, &g->a, tree[i % kTree]), GRHEAP_OK);
+    ASSERT_EQ(grheap_store(w.heap, g, &g->b, g), GRHEAP_OK); // and a cycle of its own
   }
   long calls_before = w.allocator.calls;
   w.allocator.fail_all = true;
@@ -429,7 +434,7 @@ TEST_F(MarkTest, ALongChainFoundBackwardsNeedsOnePassPerLinkAndStillCompletes) {
   ASSERT_EQ(grheap_root_add(w.heap, &head), GRHEAP_OK);
   for (size_t i = 0; i < kLength; i++) {
     Node * n = new_node(w.heap, i);
-    n->a = head;
+    ASSERT_EQ(grheap_store(w.heap, n, &n->a, head), GRHEAP_OK);
     head = n;
   }
   new_node(w.heap, 999999); // garbage

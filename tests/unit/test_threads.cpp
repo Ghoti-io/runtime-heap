@@ -84,7 +84,7 @@ TEST_F(ThreadsTest, ManyHandOffsKeepTheHeapConsistent) {
       for (int i = 0; i < 200; i++) {
         Node * n = new_node(w.heap, 0, &kPlainNode);
         if (i % 10 == 0) {
-          n->a = head;
+          ASSERT_EQ(grheap_store(w.heap, n, &n->a, head), GRHEAP_OK);
           head = n; // a tenth of what is made is kept
         }
       }

@@ -75,7 +75,7 @@ TEST_F(FailTest, AllocatingTheFirstObjectOfAClassNeedsABlockAndFailsCleanly) {
 }
 
 TEST_F(FailTest, ASingleAllocatorFailureIsSurvivedByTheRetryAfterACollection) {
-  HeapWorld w;
+  HeapWorld w(steady());
   w.allocator.calls = 0;
   w.allocator.fail_at = 1; // once: the first attempt only
   void * p = nullptr;
@@ -114,7 +114,7 @@ TEST_F(FailTest, AllocatingALargeObjectFailsCleanly) {
 }
 
 TEST_F(FailTest, AnAllocationThatFitsAnOpenBlockCallsTheAllocatorNotAtAll) {
-  HeapWorld w;
+  HeapWorld w(steady());
   new_node(w.heap, 1);
   w.allocator.calls = 0;
   for (int i = 0; i < 100; i++) {
@@ -202,7 +202,7 @@ TEST_F(FailTest, APageProviderThatCannotMapIsOomAndChangesNothing) {
 }
 
 TEST_F(FailTest, ABlockThatCannotBeMappedOnceIsMappedOnTheRetryAfterACollection) {
-  HeapWorld w;
+  HeapWorld w(steady());
   // Garbage fills the open block; the next class has no block yet.
   for (int i = 0; i < 100; i++) {
     new_node(w.heap, 0, &kPlainNode);
@@ -237,7 +237,7 @@ TEST_F(FailTest, ACollectionThatFreesWhatARefusedBlockNeededMakesTheAllocationSu
   config.memory = 200000;
   config.reserve = 0;
   config.auto_collect = false; // only the refusal itself collects
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   for (int i = 0; i < 100000; i++) {
     void * p;
     ASSERT_EQ(grheap_alloc(w.heap, &kPlainNode, &p), GRHEAP_OK) << i;
@@ -261,7 +261,8 @@ TEST_F(FailTest, ALiveHeapPastTheBudgetIsLimitAndNotOutOfMemory) {
     if (r != GRHEAP_OK) {
       break;
     }
-    static_cast<Node *>(p)->a = head;
+    ASSERT_EQ(grheap_store(w.heap, p, &static_cast<Node *>(p)->a, head),
+        GRHEAP_OK);
     head = p;
   }
   EXPECT_EQ(r, GRHEAP_ERR_LIMIT);
@@ -336,7 +337,7 @@ TEST_F(FailTest, APollOverBudgetCollectsBeforeTheVerdictAndTheRunContinues) {
   config.memory = 100000;
   config.reserve = 400000; // room to go over; the poll is what answers
   config.auto_collect = false;
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   exceed_budget(w, 100000);
   ASSERT_EQ(w.stats().collections, 0u);
   GRCORE_Outcome outcome;
@@ -362,13 +363,14 @@ TEST_F(FailTest, APollOverBudgetWithNothingToReclaimCollectsOnceThenPauses) {
   config.memory = 100000;
   config.reserve = 400000;
   config.auto_collect = false;
-  HeapWorld w(config);
+  HeapWorld w(steady(config));
   void * head = nullptr;
   ASSERT_EQ(grheap_root_add(w.heap, &head), GRHEAP_OK);
   while (grcore_context_memory_in_use(w.ctx) <= 100000) {
     void * p;
     ASSERT_EQ(grheap_alloc(w.heap, &kPlainNode, &p), GRHEAP_OK);
-    static_cast<Node *>(p)->a = head;
+    ASSERT_EQ(grheap_store(w.heap, p, &static_cast<Node *>(p)->a, head),
+        GRHEAP_OK);
     head = p;
   }
   GRCORE_Outcome outcome;

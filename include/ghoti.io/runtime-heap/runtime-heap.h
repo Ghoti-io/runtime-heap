@@ -42,6 +42,7 @@
 #include <ghoti.io/runtime-heap/libver.h>
 
 #include <ghoti.io/runtime-heap/heap.h>
+#include <ghoti.io/runtime-heap/id.h>
 #include <ghoti.io/runtime-heap/options.h>
 #include <ghoti.io/runtime-heap/roots.h>
 #include <ghoti.io/runtime-heap/store.h>

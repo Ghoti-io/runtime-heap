@@ -22,7 +22,8 @@
  * @file store.h
  * @stability stable
  *
- * `gc_store`: the only sanctioned way to write a pointer into a heap object.
+ * `gc_store`: the only sanctioned way to write a pointer into a heap object,
+ * and the barrier contract it stands for.
  *
  * Every pointer store goes through these functions (AD-11): hand-written C, an
  * interpreter's write to an object field, and out-of-line storage that a
@@ -30,13 +31,22 @@
  * non-moving full mark, there is no barrier work to do, so each call stores
  * and counts. They are exported functions rather than inline macros so that a
  * later generational or incremental mode can add a barrier without a single
- * caller changing (the barrier contract is a later work item).
+ * caller changing. The contract, in its unshared (implemented) and shared
+ * (designed) variants, is in `documentation/design.md`.
  *
  * `holder` is the heap object whose payload contains the slot; the barrier of
  * a later mode needs to know it. It may be NULL for a store into a slot that
  * is not inside any heap object: a registered root slot, a stack variable, a
- * C structure. A store into a heap object with a NULL holder is a bug that
- * today's mode cannot see and a later mode will.
+ * C structure. A store into a heap object with a NULL holder is a bug that a
+ * barrier mode would miss, and barrier-verify (::GRHEAP_VERIFY_COUNT) counts it
+ * as a violation. So is a holder whose cell does not contain the slot.
+ * Either way the store still happens and the call still returns ::GRHEAP_OK.
+ *
+ * Barrier-verify polices the discipline a barrier will rely on: it records the
+ * last value written through these functions to each slot of a heap object, and
+ * ::grheap_verify (and every collection) compares that with the slot, so a
+ * pointer written directly is found. This mode has no barrier work to do; the
+ * verify mode is the only thing the holder is used for.
  *
  * Threads: owner only, as everything in the heap.
  */
@@ -97,6 +107,27 @@ GRHEAP_API GRHEAP_Result grheap_store_range(GRHEAP_Heap * heap, void * holder,
  */
 GRHEAP_API GRHEAP_Result grheap_store_word(
     GRHEAP_Heap * heap, void * holder, uint64_t * slot, uint64_t value);
+
+/**
+ * @brief Walks every live object's traced slots and every weak and ephemeron
+ *   slot, and counts those whose value differs from what the last
+ *   `grheap_store*` wrote (a slot never stored to must be zero).
+ *
+ * With verify off (::GRHEAP_VERIFY_OFF) nothing was recorded, so nothing is
+ * checked: it succeeds with zero violations. In ::GRHEAP_VERIFY_ABORT mode
+ * the first violation prints the object's type name and the slot to stderr and
+ * aborts. Violations are also added to `verify_violations` in the stats.
+ *
+ * @param heap The heap.
+ * @param out_violations Receives the violations this walk found. Written only
+ *   on success.
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL argument, a non-owner
+ *   or a call from inside a `trace`, `destroy` or `cleared` function;
+ *   ::GRHEAP_ERR_OOM if the shadow could not keep up with the stores (its
+ *   allocation failed), so a comparison would prove nothing.
+ */
+GRHEAP_API GRHEAP_Result grheap_verify(
+    GRHEAP_Heap * heap, uint64_t * out_violations);
 
 #ifdef __cplusplus
 }

@@ -87,7 +87,7 @@ TEST_F(RootsTest, ARootSlotHoldingGarbageIsSkippedAndCountedEveryCollection) {
 }
 
 TEST_F(RootsTest, AHandleHoldsAnObjectGetAndSetWork) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * a = new_node(w.heap, 1);
   Node * b = new_node(w.heap, 2);
   GRHEAP_Handle * h = nullptr;
@@ -192,7 +192,7 @@ TEST_F(RootsTest, ThePinCountStopsAt255AndThe256thIsALimit) {
 }
 
 TEST_F(RootsTest, PinsRefuseWhatIsNotALivePayloadStartOrHasNoPin) {
-  HeapWorld w;
+  HeapWorld w(steady());
   Node * n = new_node(w.heap, 1);
   Node * other = new_node(w.heap, 2);
   int local;

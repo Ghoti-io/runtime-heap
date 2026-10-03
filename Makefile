@@ -223,7 +223,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage clears this: --coverage links the gcov runtime, whose mangle_path
 # check-symbols is right to reject in a shipping library.
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-labels \
-	check-edges check-gates examples
+	check-edges check-gates check-dynamic-gates examples
 
 VALGRIND_FLAGS := --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1 --suppressions=tests/valgrind.supp
 
@@ -337,7 +337,7 @@ $(APP_DIR)/examples/%$(EXE_EXTENSION): examples/%.c $(APP_DIR)/$(STATIC_TARGET) 
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(CORELIBRARY) $(CUTIL_LIBS)
 
 .PHONY: clean cloc docs docs-pdf examples coverage check-symbols check-stamps check-aliasing
-.PHONY: check-labels check-edges check-gates bench test-tsan
+.PHONY: check-labels check-edges check-gates check-dynamic-gates bench test-tsan test-torture
 .PHONY: all install test test-quiet test-asan test-valgrind test-valgrind-quiet test-watch uninstall watch
 .PHONY: all-debug install-debug test-debug test-valgrind-debug test-watch-debug uninstall-debug watch-debug
 .PHONY: fuzz fuzz-clean
@@ -426,8 +426,21 @@ check-edges: $(APP_DIR)/$(TARGET) ## Fail on a forbidden #include or NEEDED edge
 	@tools/check-edges.sh --includes .
 	@tools/check-edges.sh --links $(APP_DIR)
 
-check-gates: ## Prove each gate fails on its planted defect and passes its control
-	@tools/check-gates.sh
+# The build the dynamic gates compile their programs with: the library's own
+# flags, include path and link line, so a program is built the way a consumer
+# of the archive builds one. The instrument variables are removed from the
+# gates' own environment, so that `make test-torture` cannot change what they
+# prove.
+DYNAMIC_GATE_ENV = CC="$(CC)" CFLAGS="$(CFLAGS)" INCLUDE="$(INCLUDE)" \
+	LIBS="$(LDFLAGS) $(CORELIBRARY) $(CUTIL_LIBS)" LD_LIBRARY_PATH="$(TEST_LD_PATH)"
+
+check-gates: $(APP_DIR)/$(STATIC_TARGET) ## Prove each gate fails on its planted defect and passes its control
+	@$(DYNAMIC_GATE_ENV) tools/check-gates.sh
+
+# GC torture and barrier-verify are instruments, and are seen to find a planted
+# defect (a missing root, a missing store) and to pass their controls.
+check-dynamic-gates: $(APP_DIR)/$(STATIC_TARGET) | $(APP_DIR)/$(TARGET) ## Prove torture and barrier-verify catch a planted missing root and store
+	@$(DYNAMIC_GATE_ENV) tools/check-dynamic-gates.sh
 
 ####################################################################
 # Benchmarks (AD-26)
@@ -666,6 +679,22 @@ test-asan: $(ASAN_TEST_EXECUTABLES) ## Build with ASan+UBSan and run the tests
 			$$test_exe --gtest_brief=1 || exit 1; \
 	done
 	@printf '\nASan+UBSan suite clean.\n'
+
+# The whole unit suite under GC torture and barrier-verify (abort), in the
+# ASan+UBSan tree: a collection at every allocation and ACT poll, every freed
+# cell poisoned, every pointer store checked against its shadow. A test that
+# asserts exactly when a collection happens, or that holds an object only in a
+# C variable across an allocation, turns torture off for itself (`steady()` in
+# tests/test_helpers.h); the rest of the suite runs tortured.
+test-torture: $(ASAN_TEST_EXECUTABLES) ## ASan+UBSan build, every unit test with GRHEAP_TORTURE=1 GRHEAP_VERIFY=1
+	@for test_exe in $(ASAN_TEST_EXECUTABLES); do \
+		printf '\n### Torture + verify %s ###\n\n' "$$(basename $$test_exe)"; \
+		GRHEAP_TORTURE=1 GRHEAP_VERIFY=1 \
+		LD_PRELOAD="$(ASAN_RUNTIME)$${LD_PRELOAD:+:$$LD_PRELOAD}" \
+		LD_LIBRARY_PATH="$(ASAN_APP_DIR):$(LIB_INSTALL_PATH)/$(SUITE)" \
+			$$test_exe --gtest_brief=1 || exit 1; \
+	done
+	@printf '\nTorture + verify suite clean.\n'
 
 ####################################################################
 # ThreadSanitizer, in its own tree

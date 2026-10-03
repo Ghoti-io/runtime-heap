@@ -140,7 +140,22 @@ struct WorldConfig {
   uint64_t memory = GRCORE_UNLIMITED;
   uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE;
   bool create_heap = true;
+  // -1 leaves the instrument at what the environment says (GRHEAP_TORTURE,
+  // GRHEAP_VERIFY, which `make test-torture` sets); 0 and 1 (verify: 0 off,
+  // 1 count, 2 abort) are explicit and win. A test that asserts exactly when a
+  // collection happens, or that holds an object only in a C variable across an
+  // allocation, turns torture off here.
+  int torture = -1;
+  int verify = -1;
 };
+
+/* `config` with torture off: for a test that asserts exactly when a collection
+ * happens, or that holds an object only in a C variable across an allocation
+ * (which torture exists to catch). */
+inline WorldConfig steady(WorldConfig config = WorldConfig()) {
+  config.torture = 0;
+  return config;
+}
 
 /* A group over the tracking allocator and fake pages, one context, and (by
  * default) its heap. The destructor destroys them and then holds the
@@ -172,6 +187,12 @@ struct HeapWorld {
       grheap_options_set_gc_threshold(h, config.threshold);
       if (config.codec_set) {
         EXPECT_EQ(grheap_options_set_value_codec(h, &config.codec), GRHEAP_OK);
+      }
+      if (config.torture >= 0) {
+        grheap_options_set_torture(h, config.torture != 0);
+      }
+      if (config.verify >= 0) {
+        grheap_options_set_verify(h, static_cast<GRHEAP_Verify>(config.verify));
       }
       EXPECT_EQ(grheap_heap_create(ctx, h, &heap), GRHEAP_OK);
       grheap_options_destroy(h);
@@ -224,13 +245,13 @@ inline void node_destroy(void * payload) {
   destroyed_log().push_back(static_cast<Node *>(payload)->id);
 }
 
-inline const GRHEAP_Type kNode = {"node", sizeof(Node), node_trace, node_destroy};
+inline const GRHEAP_Type kNode = {"node", sizeof(Node), node_trace, node_destroy, nullptr};
 
 /* A node with no destroy hook, for the tests that count frees by statistics. */
-inline const GRHEAP_Type kPlainNode = {"plain", sizeof(Node), node_trace, nullptr};
+inline const GRHEAP_Type kPlainNode = {"plain", sizeof(Node), node_trace, nullptr, nullptr};
 
 /* A leaf: no pointers, no hook. */
-inline const GRHEAP_Type kLeaf = {"leaf", 16, nullptr, nullptr};
+inline const GRHEAP_Type kLeaf = {"leaf", 16, nullptr, nullptr, nullptr};
 
 inline Node * new_node(GRHEAP_Heap * heap, uint64_t id,
     const GRHEAP_Type * type = &kNode) {

@@ -116,12 +116,21 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
       heap->busy != 0) {
     return GRHEAP_ERR_INVALID;
   }
+  if (type->weak != NULL && !grheap_weak_spec_fits(type, bytes)) {
+    return GRHEAP_ERR_INVALID; /* a weak slot outside the payload */
+  }
   size_t cell;
   if (!grheap_cell_size(bytes, &cell)) {
     return GRHEAP_ERR_OOM;
   }
   uint64_t refusals = grcore_context_memory_refusals(heap->context);
   void * cellp;
+  bool weak = type->weak != NULL && heap->mode == GRHEAP_MODE_COLLECTED;
+  if (weak && !grheap_weak_reserve(heap)) {
+    /* The registry grows before the cell is taken, so a failure here has
+     * taken nothing. */
+    return grheap_failure(heap, refusals);
+  }
 
   if (heap->mode == GRHEAP_MODE_ARENA) {
     cellp = grheap_arena_take(heap, cell);
@@ -130,7 +139,15 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
     }
   } else {
     bool collected = false;
-    if (heap->auto_collect && heap->since_collect >= heap->next_threshold) {
+    if (heap->torture) {
+      /* A GC point (AD-17) taken for real, every time: whatever is held only
+       * in a C variable is gone now, and its cell is poisoned. */
+      heap->stats.torture_collections++;
+      grheap_collect_now(heap);
+      collected = true;
+      refusals = grcore_context_memory_refusals(heap->context);
+    } else if (heap->auto_collect &&
+        heap->since_collect >= heap->next_threshold) {
       grheap_collect_now(heap);
       collected = true;
       /* The collection allocates (its mark stack), and the budget may have
@@ -163,6 +180,9 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   }
   heap->stats.live_bytes += charged;
   heap->since_collect += charged;
+  if (weak) {
+    grheap_weak_register(heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES);
+  }
   *out_object = (unsigned char *)cellp + GRHEAP_HEADER_BYTES;
   return GRHEAP_OK;
 }

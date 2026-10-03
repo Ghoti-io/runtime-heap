@@ -42,8 +42,16 @@ static void heap_poll(
     GRCORE_Context * context, void * value, GRCORE_PollCall * call) {
   (void)context;
   GRHEAP_Heap * heap = value;
-  if (heap->mode == GRHEAP_MODE_COLLECTED && heap->busy == 0 &&
-      grcore_pollcall_reclaim_requested(call)) {
+  if (heap->mode != GRHEAP_MODE_COLLECTED || heap->busy != 0) {
+    return;
+  }
+  /* Torture collects at every poll, and a reclaim request is one more reason
+   * to: one collection answers both. */
+  bool torture = heap->torture;
+  if (torture || grcore_pollcall_reclaim_requested(call)) {
+    if (torture) {
+      heap->stats.torture_collections++;
+    }
     grheap_collect_now(heap);
   }
 }
@@ -58,6 +66,9 @@ static void heap_key_destroy(GRCORE_Context * context, void * value) {
   }
   grheap_roots_free(heap);
   grheap_mark_stack_free(heap);
+  grheap_shadow_free(heap);
+  grheap_weak_free(heap);
+  grheap_ids_free(heap);
   heap->allocator->free_fn(heap->allocator->ctx, heap);
 }
 
@@ -94,11 +105,15 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->codec = options->codec;
     heap->threshold = options->threshold;
     heap->auto_collect = options->auto_collect;
+    heap->torture = options->torture;
+    heap->verify = options->verify;
   } else {
     heap->mode = GRHEAP_MODE_COLLECTED;
     grheap_value_codec_default(&heap->codec);
     heap->threshold = GRHEAP_DEFAULT_GC_THRESHOLD;
     heap->auto_collect = true;
+    heap->torture = grheap_env_torture();
+    heap->verify = grheap_env_verify();
   }
   heap->next_threshold = heap->threshold;
 

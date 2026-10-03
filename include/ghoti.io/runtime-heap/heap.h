@@ -49,6 +49,16 @@
  * nothing else (AD-11). Every allocation is a GC point (AD-17): an object not
  * kept by one of those may be gone when the next allocation returns.
  *
+ * What else lives with the heap. A type may name a weak cell or an ephemeron
+ * (::GRHEAP_WeakSpec, in type.h), which a collection clears and reports after
+ * the sweep; id.h gives an object a stable ID and an identity hash that do not
+ * depend on its address; and two instruments, off by default, find the mistakes
+ * the rules above make easy: GC torture collects at every GC point the heap
+ * owns and poisons every freed cell, so a root that is missing shows itself, and
+ * barrier-verify finds a pointer written without ::grheap_store (options.h,
+ * store.h). A collection runs: verify, mark, the ephemeron fixpoint, clear weak
+ * slots, forget dead IDs, sweep, then the `cleared` callbacks.
+ *
  * Threads: a heap belongs to its context's owning thread. Every function takes
  * the owner and refuses any other thread with ::GRHEAP_ERR_INVALID (or its
  * documented equivalent for a query). The heap and its handles migrate with
@@ -113,6 +123,14 @@ typedef struct GRHEAP_Stats {
                               ///< object.
   uint64_t invalid_pointers;  ///< Precise slots that were not a payload start
                               ///< and were skipped.
+  uint64_t torture_collections; ///< Collections torture ran (allocation starts
+                              ///< and polls), a subset of `collections`.
+  uint64_t verify_violations; ///< Barrier-verify violations found, counting a
+                              ///< slot again at every walk that finds it.
+  uint64_t weak_cleared;      ///< Weak cells whose slot a collection cleared.
+  uint64_t ephemerons_cleared; ///< Ephemerons a collection cleared.
+  uint64_t ids_issued;        ///< Stable IDs ever assigned.
+  uint64_t ids_live;          ///< Stable IDs whose object is still alive.
 } GRHEAP_Stats;
 
 /**

@@ -53,7 +53,7 @@
 #define GRHEAP_NO_ASAN
 #endif
 
-static bool decode(const GRHEAP_Heap * heap, uint64_t word, uint64_t * out) {
+bool grheap_decode(const GRHEAP_Heap * heap, uint64_t word, uint64_t * out) {
   const GRHEAP_ValueCodec * c = &heap->codec;
   if ((word & c->tag_mask) != c->tag_value) {
     return false;
@@ -111,7 +111,7 @@ static void mark_precise(GRHEAP_Heap * heap, uint64_t address) {
 static void trace_payload(GRHEAP_Heap * heap, void * payload) {
   const GRHEAP_Type * type = grheap_header(payload)->type;
   if (type->trace != NULL) {
-    GRHEAP_Tracer tracer = {heap};
+    GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_MARK};
     type->trace(&tracer, payload);
   }
 }
@@ -148,8 +148,17 @@ static void finish(GRHEAP_Heap * heap) {
   }
 }
 
+void grheap_mark_extra(GRHEAP_Heap * heap, GRHEAP_Span * span, size_t index) {
+  mark_cell(heap, span, index);
+  finish(heap);
+}
+
 void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
   if (tracer == NULL || slot == NULL) {
+    return;
+  }
+  if (tracer->mode == GRHEAP_TRACE_VERIFY) {
+    grheap_verify_slot(tracer, slot);
     return;
   }
   mark_precise(tracer->heap, (uint64_t)(uintptr_t)*slot);
@@ -159,8 +168,12 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
   if (tracer == NULL || slot == NULL) {
     return;
   }
+  if (tracer->mode == GRHEAP_TRACE_VERIFY) {
+    grheap_verify_slot(tracer, slot);
+    return;
+  }
   uint64_t address;
-  if (decode(tracer->heap, *slot, &address)) {
+  if (grheap_decode(tracer->heap, *slot, &address)) {
     mark_precise(tracer->heap, address);
   }
 }
@@ -168,7 +181,7 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
 static void visit_slot(void * user, uint64_t * slot) {
   GRHEAP_Heap * heap = user;
   uint64_t address;
-  if (decode(heap, *slot, &address)) {
+  if (grheap_decode(heap, *slot, &address)) {
     mark_precise(heap, address);
   }
 }

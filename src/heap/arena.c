@@ -106,6 +106,8 @@ GRHEAP_Result grheap_arena_reset(GRHEAP_Heap * heap) {
   grheap_run_all_destroys(heap);
   grheap_release_all_spans(heap);
   grheap_roots_clear_for_reset(heap);
+  grheap_ids_clear(heap);
+  grheap_shadow_clear(heap);
   heap->stats.frees += heap->stats.live_objects;
   heap->stats.live_objects = 0;
   heap->stats.live_bytes = 0;

@@ -17,6 +17,10 @@ needs an engine.
 | See a cycle collected, and each `destroy` hook run once | [`cyclic_graph.c`](cyclic_graph.c), `main` |
 | Read what a heap has done (`grheap_stats`) | [`cyclic_graph.c`](cyclic_graph.c), `main` |
 | Allocate in an arena and drop everything at once | [`cyclic_graph.c`](cyclic_graph.c), `main`, "An arena" |
+| Describe a weak cell and learn when its target died (`GRHEAP_WeakSpec`, `cleared`) | [`weak_and_ids.c`](weak_and_ids.c), `cache_type`, "A weak cell" |
+| Keep a value alive only as long as its key is (an ephemeron) | [`weak_and_ids.c`](weak_and_ids.c), `main`, "An ephemeron" |
+| Name an object without its address (`grheap_id_of`, `grheap_object_of_id`, `grheap_identity_hash`) | [`weak_and_ids.c`](weak_and_ids.c), `main`, "Stable IDs" |
+| Run under the instruments (`GRHEAP_TORTURE=1`, `GRHEAP_VERIFY=1`) | [`weak_and_ids.c`](weak_and_ids.c) runs unchanged under both; `make test-torture` runs the unit tests that way |
 
 The graph is two nodes that point at each other. A reference-counting scheme
 never frees such a pair; here nothing special is done for it, because the

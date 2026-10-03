@@ -182,12 +182,24 @@ int main(void) {
     fprintf(stderr, "consumer: could not make a heap\n");
     return 1;
   }
-  static const GRHEAP_Type type = {"t", 32, NULL, note_free};
+  static const GRHEAP_Type type = {"t", 32, NULL, note_free, NULL};
   void * object;
   if (grheap_alloc(heap, &type, &object) != GRHEAP_OK ||
       !grheap_contains(heap, object) || grheap_collect(heap) != GRHEAP_OK ||
       freed != 1 || grheap_contains(heap, object)) {
     fprintf(stderr, "consumer: the collector did not collect\n");
+    return 1;
+  }
+  // id.h through the installed umbrella: an ID, and its unknown after death.
+  uint64_t id = 0;
+  void * back = NULL;
+  void * second;
+  if (grheap_alloc(heap, &type, &second) != GRHEAP_OK ||
+      grheap_id_of(heap, second, &id) != GRHEAP_OK || id != 1 ||
+      grheap_object_of_id(heap, id, &back) != GRHEAP_OK || back != second ||
+      grheap_collect(heap) != GRHEAP_OK ||
+      grheap_object_of_id(heap, id, &back) != GRHEAP_ERR_INVALID) {
+    fprintf(stderr, "consumer: stable IDs did not behave\n");
     return 1;
   }
   if (grcore_context_destroy(context) != GRCORE_OK ||

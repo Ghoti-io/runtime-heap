@@ -19,7 +19,12 @@
 # library, one that links the stubs of the two allowed dependencies (cutil and
 # runtime-core), and one that links a BRANCH-suffixed cutil.
 #
-# Usage: check-gates.sh   (from the project root)
+# The dynamic gates (torture, barrier-verify) have their own script,
+# check-dynamic-gates.sh; this file checks that it too fails on an empty
+# population and on a program it cannot build. Run through make, which supplies
+# the build (CC, CFLAGS, INCLUDE, LIBS) that script compiles with.
+#
+# Usage: make check-gates   (or check-gates.sh with that environment set)
 
 set -u
 
@@ -154,6 +159,18 @@ else
     "$E" --links "$work/planted"
 fi
 expect_fail 'links/empty' 'measuring nothing' "$E" --links "$work/empty"
+
+printf 'check-dynamic-gates\n'
+# The dynamic gate builds programs, so it needs the build's compiler and link
+# line (make supplies them). Without them this self-test could not tell a gate
+# that fails for the right reason from one that fails for a missing tool.
+D="$HERE/check-dynamic-gates.sh"
+if [ -z "${LIBS:-}" ]; then
+  fail "LIBS is not set: run this through 'make check-gates', which supplies the build the dynamic gates compile with"
+else
+  expect_fail 'dynamic/empty' 'measuring nothing' "$D" "$work/empty"
+  expect_fail 'dynamic/unbuildable' 'could not build' "$D" "$FIX/dynamic-unbuildable"
+fi
 
 if [ "$failures" -ne 0 ]; then
   printf 'check-gates: %d of %d checks failed\n' "$failures" "$checks" >&2

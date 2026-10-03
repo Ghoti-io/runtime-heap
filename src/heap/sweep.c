@@ -32,6 +32,10 @@
  * one.
  *
  * The dead are found a word of the bit maps at a time: `alloc & ~mark`.
+ *
+ * Two instruments hook in here. With barrier-verify on, a dead object's shadow
+ * entries are forgotten before its `destroy` hook runs. With torture on, every
+ * freed cell of a block is poisoned with 0xDD after its free-list link word.
  */
 
 #include <ghoti.io/runtime-heap/macros.h>
@@ -41,7 +45,7 @@
 #include <string.h>
 
 /* Frees every dead cell of one block. Returns how many. */
-static size_t sweep_block(GRHEAP_Span * s) {
+static size_t sweep_block(GRHEAP_Heap * heap, GRHEAP_Span * s) {
   size_t freed = 0;
   size_t words = grheap_bit_words(s->bump);
   for (size_t w = 0; w < words; w++) {
@@ -53,6 +57,11 @@ static size_t sweep_block(GRHEAP_Span * s) {
       size_t index = w * 64u + b;
       void * payload = grheap_payload(s, index);
       const GRHEAP_Type * type = grheap_header(payload)->type;
+      if (heap->verify != GRHEAP_VERIFY_OFF) {
+        /* Before `destroy`, so a hook sees no stale shadow of its own slots. */
+        grheap_shadow_forget_range(heap, (uintptr_t)payload,
+            (size_t)(s->cell - GRHEAP_HEADER_BYTES));
+      }
       if (type->destroy != NULL) {
         type->destroy(payload);
       }
@@ -60,6 +69,14 @@ static size_t sweep_block(GRHEAP_Span * s) {
       grheap_bit_clear(s->alloc, index);
       *(void **)cell = s->free_list; /* overwrites the dead header's type */
       s->free_list = cell;
+      if (heap->torture && !s->large) {
+        /* Everything after the link word, so that a read through a dangling
+         * pointer sees 0xDD and not plausible data. ASan cannot see inside a
+         * block, so this is the instrument. (The link word *is* the type word;
+         * nothing else of the cell survives.) */
+        memset((unsigned char *)cell + sizeof(void *), 0xDD,
+            s->cell - sizeof(void *));
+      }
       freed++;
     }
   }
@@ -81,7 +98,7 @@ void grheap_sweep(GRHEAP_Heap * heap) {
   heap->busy++;
   for (size_t i = 0; i < heap->nspans; i++) {
     GRHEAP_Span * s = heap->spans[i];
-    freed += sweep_block(s);
+    freed += sweep_block(heap, s);
     memset(s->mark, 0, grheap_bit_words(s->ncells) * sizeof(uint64_t));
     if (s->live == 0) {
       grheap_span_free(heap, s);

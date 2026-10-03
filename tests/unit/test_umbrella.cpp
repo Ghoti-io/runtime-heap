@@ -35,8 +35,16 @@ TEST(Umbrella, ReachesEveryHeaderOfTheAPI) {
   EXPECT_EQ(grheap_store(nullptr, nullptr, nullptr, nullptr),
       GRHEAP_ERR_INVALID);
   grheap_trace_slot(nullptr, nullptr); // ignored
-  GRHEAP_Type type = {"t", 8, nullptr, nullptr};
+  GRHEAP_Type type = {"t", 8, nullptr, nullptr, nullptr};
   EXPECT_EQ(type.size, 8u);
+  // id.h, the weak spec in type.h, the instruments in options.h and store.h.
+  uint64_t id = 0;
+  EXPECT_EQ(grheap_id_of(nullptr, nullptr, &id), GRHEAP_ERR_INVALID);
+  uint64_t violations = 0;
+  EXPECT_EQ(grheap_verify(nullptr, &violations), GRHEAP_ERR_INVALID);
+  GRHEAP_WeakSpec weak = {GRHEAP_WEAK_CELL, 0, 0, 0, false, nullptr};
+  EXPECT_EQ(weak.kind, GRHEAP_WEAK_CELL);
+  EXPECT_EQ(grheap_options_set_torture(nullptr, true), GRHEAP_ERR_INVALID);
 }
 
 TEST(Umbrella, TheStabilityConstantsAreThoseTheDocumentationStates) {

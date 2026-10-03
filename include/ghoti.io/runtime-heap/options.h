@@ -93,6 +93,16 @@ typedef struct GRHEAP_ValueCodec {
   uint64_t base;      ///< Added after the shift.
 } GRHEAP_ValueCodec;
 
+/** @brief How much the barrier-verify instrument does. */
+typedef enum {
+  /** Nothing is recorded or checked (the default). */
+  GRHEAP_VERIFY_OFF = 0,
+  /** Violations are counted (`verify_violations` in the stats). */
+  GRHEAP_VERIFY_COUNT,
+  /** The first violation names the object and slot on stderr and aborts. */
+  GRHEAP_VERIFY_ABORT
+} GRHEAP_Verify;
+
 /** @brief The default allocation threshold: 256 KiB. */
 #define GRHEAP_DEFAULT_GC_THRESHOLD 262144u
 
@@ -105,8 +115,15 @@ GRHEAP_API void grheap_value_codec_default(GRHEAP_ValueCodec * codec);
 
 /**
  * @brief Creates an options object holding the defaults: collected mode, the
- *   identity codec, a threshold of ::GRHEAP_DEFAULT_GC_THRESHOLD and
- *   auto-collect on.
+ *   identity codec, a threshold of ::GRHEAP_DEFAULT_GC_THRESHOLD,
+ *   auto-collect on, torture off and verify off.
+ *
+ * The two instruments take their default from the environment, so that a whole
+ * test suite can be run under them without editing it: `GRHEAP_TORTURE=1`
+ * makes torture on, and `GRHEAP_VERIFY=1` makes verify ::GRHEAP_VERIFY_ABORT
+ * (`GRHEAP_VERIFY=count` makes it ::GRHEAP_VERIFY_COUNT). An explicit setter
+ * always wins. A heap created with a NULL options argument gets the same
+ * defaults.
  *
  * @param allocator The allocator for the object, or NULL for the default. It
  *   must outlive the object.
@@ -214,6 +231,57 @@ GRHEAP_API GRHEAP_Result grheap_options_set_auto_collect(
  * @return The setting; true for NULL.
  */
 GRHEAP_API bool grheap_options_get_auto_collect(const GRHEAP_Options * options);
+
+/**
+ * @brief Turns GC torture on or off.
+ *
+ * On, a collected heap collects at every GC point it owns: at the start of
+ * every allocation (before the cell is taken) and in every ACT poll. After each
+ * sweep every freed cell is poisoned (every byte after its free-list link word
+ * set to 0xDD), so a read through a dangling pointer sees poison even though
+ * ASan cannot look inside a block. Its purpose is to find a root that is
+ * missing: an object kept only in a C variable across an allocation. In an
+ * arena nothing is collected, so torture does nothing there.
+ *
+ * @param options The object.
+ * @param enabled Whether to torture.
+ * @return ::GRHEAP_OK, or ::GRHEAP_ERR_INVALID for NULL.
+ */
+GRHEAP_API GRHEAP_Result grheap_options_set_torture(
+    GRHEAP_Options * options, bool enabled);
+
+/**
+ * @brief Whether torture is on.
+ *
+ * @param options The object.
+ * @return The setting; false for NULL.
+ */
+GRHEAP_API bool grheap_options_get_torture(const GRHEAP_Options * options);
+
+/**
+ * @brief Chooses what barrier-verify does.
+ *
+ * Verify keeps a shadow of the last value written through each
+ * `grheap_store*` to a slot of a heap object, and compares it with the slot
+ * itself at every collection and in ::grheap_verify. A slot that differs was
+ * written without passing a store: the discipline a barrier will rely on.
+ * It changes no result of the heap (only its cost).
+ *
+ * @param options The object.
+ * @param mode The mode.
+ * @return ::GRHEAP_OK, or ::GRHEAP_ERR_INVALID for NULL or a value outside the
+ *   enum (nothing changes).
+ */
+GRHEAP_API GRHEAP_Result grheap_options_set_verify(
+    GRHEAP_Options * options, GRHEAP_Verify mode);
+
+/**
+ * @brief The verify mode.
+ *
+ * @param options The object.
+ * @return The mode; ::GRHEAP_VERIFY_OFF for NULL.
+ */
+GRHEAP_API GRHEAP_Verify grheap_options_get_verify(const GRHEAP_Options * options);
 
 #ifdef __cplusplus
 }

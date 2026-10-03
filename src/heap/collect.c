@@ -33,6 +33,12 @@
  * The heap is *busy* for the whole run: an allocation, a handle, a pin or a
  * second collection attempted from a `trace` or `destroy` function is refused
  * with ERR_INVALID rather than corrupting the walk.
+ *
+ * The order of a run (weak.c, id.c, verify.c, sweep.c):
+ *
+ *   verify walk -> mark roots -> ephemeron fixpoint -> clear weak slots
+ *     -> drop dead IDs -> sweep (forget shadow, destroy, poison)
+ *     -> `cleared` callbacks
  */
 
 #include <ghoti.io/runtime-heap/macros.h>
@@ -41,7 +47,12 @@
 
 void grheap_collect_now(GRHEAP_Heap * heap) {
   heap->busy++;
+  if (heap->verify != GRHEAP_VERIFY_OFF && !heap->shadow_lost) {
+    (void)grheap_verify_walk(heap);
+  }
   grheap_mark(heap);
+  grheap_weak_process(heap);
+  grheap_ids_drop_dead(heap);
   grheap_sweep(heap);
   grheap_mark_stack_free(heap);
   heap->busy--;
@@ -52,6 +63,10 @@ void grheap_collect_now(GRHEAP_Heap * heap) {
   heap->next_threshold = heap->stats.live_bytes > heap->threshold
       ? heap->stats.live_bytes
       : heap->threshold;
+
+  /* After the sweep, with the heap busy again: the weak cells that lost a
+   * target are told. They are live, and the free lists are not touched. */
+  grheap_weak_run_cleared(heap);
 }
 
 GRHEAP_Result grheap_collect(GRHEAP_Heap * heap) {

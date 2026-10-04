@@ -182,7 +182,7 @@ int main(void) {
     fprintf(stderr, "consumer: could not make a heap\n");
     return 1;
   }
-  static const GRHEAP_Type type = {"t", 32, NULL, note_free, NULL};
+  static const GRHEAP_Type type = {"t", 32, NULL, note_free, NULL, NULL, NULL};
   void * object;
   if (grheap_alloc(heap, &type, &object) != GRHEAP_OK ||
       !grheap_contains(heap, object) || grheap_collect(heap) != GRHEAP_OK ||

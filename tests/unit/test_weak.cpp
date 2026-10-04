@@ -386,6 +386,127 @@ TEST_F(WeakTest, AChainOfEphemeronsIsFollowedToAFixpoint) {
   }
 }
 
+namespace {
+
+/* A chain E[i].key = V[i], E[i].value = V[i+1], with only V[0] held and the
+ * ephemerons registered last link first. Returns how many of V survived a
+ * collection. */
+size_t chain_survivors(HeapWorld & w, int links, bool during_failing_allocator) {
+  std::vector<Eph *> e(static_cast<size_t>(links));
+  std::vector<GRHEAP_Handle *> he(static_cast<size_t>(links));
+  for (int i = links - 1; i >= 0; i--) {
+    e[static_cast<size_t>(i)] = new_eph(w, 100 + static_cast<uint64_t>(i));
+    he[static_cast<size_t>(i)] = hold(w, e[static_cast<size_t>(i)]);
+  }
+  std::vector<Node *> v(static_cast<size_t>(links) + 1);
+  GRHEAP_Handle * hv0 = nullptr;
+  for (int i = 0; i <= links; i++) {
+    size_t k = static_cast<size_t>(i);
+    v[k] = target(w, 1000 + static_cast<uint64_t>(i));
+    if (i == 0) {
+      hv0 = hold(w, v[0]);
+    } else {
+      EXPECT_EQ(grheap_store(w.heap, e[k - 1], &e[k - 1]->value, v[k]), GRHEAP_OK);
+    }
+    if (i < links) {
+      EXPECT_EQ(grheap_store(w.heap, e[k], &e[k]->key, v[k]), GRHEAP_OK);
+    }
+  }
+  w.allocator.fail_all = during_failing_allocator;
+  EXPECT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  w.allocator.fail_all = false;
+  size_t alive = 0;
+  for (int i = 0; i <= links; i++) {
+    alive += !destroyed(1000 + static_cast<uint64_t>(i));
+  }
+  EXPECT_EQ(grheap_handle_destroy(hv0), GRHEAP_OK);
+  for (auto h : he) {
+    EXPECT_EQ(grheap_handle_destroy(h), GRHEAP_OK);
+  }
+  return alive;
+}
+
+} // namespace
+
+TEST_F(WeakTest, ALongChainRegisteredAgainstItsLinksIsResolvedWhole) {
+  HeapWorld w(steady());
+  the_heap = w.heap;
+  EXPECT_EQ(chain_survivors(w, 600, false), 601u);
+  EXPECT_EQ(w.stats().ephemerons_cleared, 0u);
+}
+
+TEST_F(WeakTest, TheChainIsResolvedWholeWhenTheCollectorCannotAllocate) {
+  // The indexed fixpoint needs memory; with none, the scanning one does it.
+  HeapWorld w(steady());
+  the_heap = w.heap;
+  EXPECT_EQ(chain_survivors(w, 200, true), 201u);
+  EXPECT_EQ(w.stats().ephemerons_cleared, 0u);
+}
+
+TEST_F(WeakTest, AnEphemeronCellReachedOnlyThroughAnotherEphemeronsValueResolvesToo) {
+  // E1 holds K (alive) and has E2's cell as its value, so E2's cell is marked
+  // only when E1 resolves, after E2 has been looked at and found unmarked. E2
+  // has the same live key K and a value W of its own.
+  HeapWorld w(steady());
+  the_heap = w.heap;
+  Eph * e2 = new_eph(w, 2);
+  GRHEAP_Handle * h2 = hold(w, e2);
+  Eph * e1 = new_eph(w, 1);
+  GRHEAP_Handle * h1 = hold(w, e1);
+  Node * k = target(w, 10);
+  GRHEAP_Handle * hk = hold(w, k);
+  Node * wv = target(w, 11);
+  ASSERT_EQ(grheap_store(w.heap, e2, &e2->key, k), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, e2, &e2->value, wv), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, e1, &e1->key, k), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(h2), GRHEAP_OK); // E2 is now held by E1 only
+  ASSERT_EQ(grheap_store(w.heap, e1, &e1->value, e2), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_TRUE(grheap_contains(w.heap, e2));
+  EXPECT_TRUE(grheap_contains(w.heap, wv)) << "E2's value, kept by E2's live key";
+  EXPECT_FALSE(destroyed(11));
+  EXPECT_EQ(w.stats().ephemerons_cleared, 0u);
+  ASSERT_EQ(grheap_handle_destroy(hk), GRHEAP_OK);
+  ASSERT_EQ(grheap_handle_destroy(h1), GRHEAP_OK);
+}
+
+TEST_F(WeakTest, SeveralEphemeronsWithOneKeyAreAllResolvedWhenThatKeyIsMarkedLate) {
+  // Three ephemerons share the key K, which is reachable only as the value of
+  // a fourth, whose own key is held. K is marked in the middle of the
+  // fixpoint, and every ephemeron it keys has to be found.
+  HeapWorld w(steady());
+  the_heap = w.heap;
+  Eph * share[3];
+  GRHEAP_Handle * hs[3];
+  Node * values[3];
+  for (int i = 0; i < 3; i++) {
+    share[i] = new_eph(w, 30 + static_cast<uint64_t>(i));
+    hs[i] = hold(w, share[i]);
+  }
+  Eph * lead = new_eph(w, 40);
+  GRHEAP_Handle * hl = hold(w, lead);
+  Node * anchor = target(w, 50);
+  GRHEAP_Handle * ha = hold(w, anchor);
+  Node * k = target(w, 51);
+  ASSERT_EQ(grheap_store(w.heap, lead, &lead->key, anchor), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, lead, &lead->value, k), GRHEAP_OK);
+  for (int i = 0; i < 3; i++) {
+    values[i] = target(w, 60 + static_cast<uint64_t>(i));
+    ASSERT_EQ(grheap_store(w.heap, share[i], &share[i]->key, k), GRHEAP_OK);
+    ASSERT_EQ(grheap_store(w.heap, share[i], &share[i]->value, values[i]), GRHEAP_OK);
+  }
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_FALSE(destroyed(51));
+  for (int i = 0; i < 3; i++) {
+    EXPECT_FALSE(destroyed(60 + static_cast<uint64_t>(i))) << i;
+    EXPECT_TRUE(grheap_contains(w.heap, values[i])) << i;
+  }
+  EXPECT_EQ(w.stats().ephemerons_cleared, 0u);
+  for (auto h : {hs[0], hs[1], hs[2], hl, ha}) {
+    ASSERT_EQ(grheap_handle_destroy(h), GRHEAP_OK);
+  }
+}
+
 TEST_F(WeakTest, AnEncodedWeakCellDecodesItsWordAndLeavesAnIntegerAlone) {
   WorldConfig config;
   config.codec_set = true;

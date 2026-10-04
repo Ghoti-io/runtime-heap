@@ -497,6 +497,84 @@ static uint64_t retention_run(uint64_t iterations) {
   return sink;
 }
 
+#define EPH_CHAIN 4096u
+
+typedef struct {
+  void * next;  /* strong: the list that keeps every ephemeron alive */
+  void * key;   /* weak key */
+  void * value; /* held while the key is */
+} EphNode;
+
+static void eph_node_trace(GRHEAP_Tracer * tracer, void * payload) {
+  grheap_trace_slot(tracer, &((EphNode *)payload)->next);
+}
+
+static const GRHEAP_WeakSpec eph_spec = {GRHEAP_EPHEMERON, 0,
+    offsetof(EphNode, key), offsetof(EphNode, value), false, NULL};
+static const GRHEAP_Type eph_node_type = {
+    "eph-node", sizeof(EphNode), eph_node_trace, NULL, &eph_spec, NULL, NULL};
+
+/* One collection of a chain of 4,096 ephemerons, built so the registry lists
+ * them in the opposite order to the chain: ephemeron i keeps object i+1 alive
+ * while object i is, and only object 0 is held from outside. A pass over the
+ * registry then resolves one link, which is the worst case for a fixpoint that
+ * rescans the registry each pass. An iteration is one collection. */
+static uint64_t ephemeron_chain_run(uint64_t iterations) {
+  World w;
+  /* No collection while the chain is built: its objects are held by nothing
+   * yet. */
+  if (grcore_group_create(NULL, NULL, &w.group) != GRCORE_OK ||
+      grcore_context_create(w.group, NULL, &w.context) != GRCORE_OK) {
+    setup_failed("world");
+  }
+  GRHEAP_Options * options;
+  if (grheap_options_create(NULL, &options) != GRHEAP_OK ||
+      grheap_options_set_auto_collect(options, false) != GRHEAP_OK ||
+      grheap_options_set_torture(options, false) != GRHEAP_OK ||
+      grheap_options_set_verify(options, GRHEAP_VERIFY_OFF) != GRHEAP_OK ||
+      grheap_heap_create(w.context, options, &w.heap) != GRHEAP_OK) {
+    setup_failed("heap");
+  }
+  grheap_options_destroy(options);
+  void * objects[EPH_CHAIN + 1];
+  for (unsigned i = 0; i <= EPH_CHAIN; i++) {
+    if (grheap_alloc(w.heap, &leaf_type, &objects[i]) != GRHEAP_OK) {
+      setup_failed("object");
+    }
+  }
+  void * head = NULL;
+  void * first = objects[0];
+  if (grheap_root_add(w.heap, &head) != GRHEAP_OK ||
+      grheap_root_add(w.heap, &first) != GRHEAP_OK) {
+    setup_failed("roots");
+  }
+  for (unsigned i = EPH_CHAIN; i-- > 0;) {
+    void * p;
+    if (grheap_alloc(w.heap, &eph_node_type, &p) != GRHEAP_OK) {
+      setup_failed("ephemeron");
+    }
+    EphNode * e = p;
+    e->next = head;
+    e->key = objects[i];
+    e->value = objects[i + 1];
+    head = p;
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    if (grheap_collect(w.heap) != GRHEAP_OK) {
+      setup_failed("collect");
+    }
+    GRHEAP_Stats stats;
+    if (grheap_stats(w.heap, &stats) != GRHEAP_OK ||
+        stats.live_objects != 2u * EPH_CHAIN + 1u) {
+      setup_failed("the chain did not survive whole");
+    }
+    sink += stats.live_objects;
+  }
+  world_close(&w);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"alloc-small", alloc_small_run, 20u * 1000u * 1000u, 100000u},
@@ -504,6 +582,7 @@ static const Case cases[] = {
     {"mark-sweep-10k", mark_sweep_run, 2000u, 3u},
     {"store", store_run, 200u * 1000u * 1000u, 100000u},
     {"weak-clear-1k", weak_clear_run, 20000u, 3u},
+    {"ephemeron-chain-4k", ephemeron_chain_run, 20u, 1u},
     {"id-lookup", id_lookup_run, 50u * 1000u * 1000u, 100000u},
     {"image-take-10k", image_take_run, 2000u, 3u},
     {"image-restore-10k", image_restore_run, 1000u, 3u},

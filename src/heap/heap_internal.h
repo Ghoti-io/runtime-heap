@@ -204,6 +204,11 @@ struct GRHEAP_Heap {
   size_t mark_top;
   size_t mark_cap;
   bool mark_overflow;                 ///< A push was dropped; rescan.
+  /** Called with `mark_hook_user` and the payload of every cell the marker
+   *  newly marks, or NULL. The ephemeron fixpoint uses it to learn what its
+   *  own marking reached; it must only record, never mark. */
+  void (*mark_hook)(void * user, void * payload);
+  void * mark_hook_user;
 
   bool torture;                       ///< Collect at every GC point.
   GRHEAP_Verify verify;               ///< Barrier-verify mode.

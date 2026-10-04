@@ -48,6 +48,7 @@
 
 #include "heap_internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 /* How a weak slot reads. */
@@ -176,7 +177,12 @@ static bool key_holds(const GRHEAP_Heap * heap, const GRHEAP_WeakSpec * spec,
   }
 }
 
-static void fixpoint(GRHEAP_Heap * heap) {
+/* The fixpoint by rescanning: each pass looks at every registered entry, and
+ * it passes until one marks nothing. Correct always, but a chain registered in
+ * the opposite order to its links resolves one link per pass, which is
+ * quadratic in the chain. It is what runs when the indexed version below
+ * cannot get its memory. */
+static void fixpoint_scan(GRHEAP_Heap * heap) {
   bool changed;
   do {
     changed = false;
@@ -197,6 +203,157 @@ static void fixpoint(GRHEAP_Heap * heap) {
       }
     }
   } while (changed);
+}
+
+/* The fixpoint by what marking reaches. An ephemeron's value is marked when
+ * its own cell is marked and its key holds, so an ephemeron becomes ready at
+ * exactly two events: its key being marked, or its cell being marked. Two
+ * tables sorted by address say which ephemerons a newly marked cell is the
+ * key of, and which it is; the marker reports every cell it newly marks
+ * through `mark_hook`, which only queues what has become ready. Each
+ * ephemeron is queued once, so the work is the ephemerons times log, plus the
+ * log of the ephemerons for each cell the fixpoint itself marks. */
+typedef struct {
+  uintptr_t address;
+  uint32_t entry;
+} Link;
+
+typedef struct {
+  GRHEAP_Heap * heap;
+  Link * keys;         ///< Ephemerons with a live key, by the key's address.
+  size_t nkeys;
+  Link * owners;       ///< Every ephemeron, by its own address.
+  size_t nowners;
+  uint32_t * queue;    ///< Ready entries, each at most once.
+  size_t head;
+  size_t tail;
+  unsigned char * queued; ///< Per registry entry.
+} Fix;
+
+static int link_order(const void * a, const void * b) {
+  const Link * x = a;
+  const Link * y = b;
+  if (x->address != y->address) {
+    return x->address < y->address ? -1 : 1;
+  }
+  return (x->entry > y->entry) - (x->entry < y->entry);
+}
+
+static size_t first_at(const Link * links, size_t n, uintptr_t address) {
+  size_t lo = 0;
+  size_t hi = n;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (links[mid].address < address) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/* Queues entry `e` if it is ready now. */
+static void consider(Fix * f, uint32_t e) {
+  if (f->queued[e]) {
+    return;
+  }
+  unsigned char * payload = f->heap->weak[e].object;
+  const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+  if (marked(f->heap, payload) && key_holds(f->heap, spec, payload)) {
+    f->queued[e] = 1;
+    f->queue[f->tail++] = e;
+  }
+}
+
+static void fix_on_mark(void * user, void * payload) {
+  Fix * f = user;
+  uintptr_t address = (uintptr_t)payload;
+  for (size_t i = first_at(f->keys, f->nkeys, address);
+      i < f->nkeys && f->keys[i].address == address; i++) {
+    consider(f, f->keys[i].entry);
+  }
+  size_t o = first_at(f->owners, f->nowners, address);
+  if (o < f->nowners && f->owners[o].address == address) {
+    consider(f, f->owners[o].entry);
+  }
+}
+
+/* False, with nothing marked and the hook off, if the tables cannot be had. */
+static bool fixpoint_indexed(GRHEAP_Heap * heap) {
+  size_t count = 0;
+  if (heap->nweak > UINT32_MAX) {
+    return false;
+  }
+  for (size_t e = 0; e < heap->nweak; e++) {
+    const GRHEAP_WeakSpec * spec =
+        grheap_header(heap->weak[e].object)->type->weak;
+    count += spec->kind == GRHEAP_EPHEMERON;
+  }
+  if (count == 0) {
+    return true;
+  }
+  if (count > SIZE_MAX / (2 * sizeof(Link) + sizeof(uint32_t) + 2)) {
+    return false;
+  }
+  size_t bytes = count * 2 * sizeof(Link) + count * sizeof(uint32_t) + heap->nweak;
+  unsigned char * block = heap->allocator->malloc_fn(heap->allocator->ctx, bytes);
+  if (block == NULL) {
+    return false;
+  }
+  Fix f = {.heap = heap};
+  /* One block, carved by byte offsets so that each part is only ever read as
+   * its own type. Link is 16 bytes and 8-aligned, so the arrays that follow it
+   * are aligned too. */
+  f.keys = (Link *)(void *)block;
+  f.owners = (Link *)(void *)(block + count * sizeof(Link));
+  f.queue = (uint32_t *)(void *)(block + 2 * count * sizeof(Link));
+  f.queued = block + 2 * count * sizeof(Link) + count * sizeof(uint32_t);
+  memset(f.queued, 0, heap->nweak);
+  for (size_t e = 0; e < heap->nweak; e++) {
+    unsigned char * payload = heap->weak[e].object;
+    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    if (spec->kind != GRHEAP_EPHEMERON) {
+      continue;
+    }
+    f.owners[f.nowners].address = (uintptr_t)payload;
+    f.owners[f.nowners++].entry = (uint32_t)e;
+    GRHEAP_Span * s;
+    size_t i;
+    if (classify(heap, spec, payload, spec->key_offset, &s, &i) == REF_LIVE) {
+      f.keys[f.nkeys].address = (uintptr_t)grheap_payload(s, i);
+      f.keys[f.nkeys++].entry = (uint32_t)e;
+    }
+  }
+  qsort(f.keys, f.nkeys, sizeof(Link), link_order);
+  qsort(f.owners, f.nowners, sizeof(Link), link_order);
+
+  heap->mark_hook = fix_on_mark;
+  heap->mark_hook_user = &f;
+  for (size_t k = 0; k < f.nowners; k++) {
+    consider(&f, f.owners[k].entry);
+  }
+  while (f.head < f.tail) {
+    uint32_t e = f.queue[f.head++];
+    unsigned char * payload = heap->weak[e].object;
+    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    GRHEAP_Span * s;
+    size_t i;
+    if (classify(heap, spec, payload, spec->value_offset, &s, &i) == REF_LIVE &&
+        !grheap_bit_get(s->mark, i)) {
+      grheap_mark_extra(heap, s, i);
+    }
+  }
+  heap->mark_hook = NULL;
+  heap->mark_hook_user = NULL;
+  heap->allocator->free_fn(heap->allocator->ctx, block);
+  return true;
+}
+
+static void fixpoint(GRHEAP_Heap * heap) {
+  if (!fixpoint_indexed(heap)) {
+    fixpoint_scan(heap);
+  }
 }
 
 static void clear_weak_cell(GRHEAP_Heap * heap, GRHEAP_WeakEntry * entry,

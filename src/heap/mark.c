@@ -91,6 +91,9 @@ static void mark_cell(GRHEAP_Heap * heap, GRHEAP_Span * span, size_t index) {
   if (grheap_header(payload)->type->trace != NULL) {
     push(heap, payload);
   }
+  if (heap->mark_hook != NULL) {
+    heap->mark_hook(heap->mark_hook_user, payload);
+  }
 }
 
 /* A decoded address that must be exactly a live payload start. */

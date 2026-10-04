@@ -63,7 +63,12 @@ typedef struct GRHEAP_Tracer GRHEAP_Tracer;
  * ::grheap_trace_word for a slot holding an encoded value. Must not allocate
  * in the heap (that is refused with ::GRHEAP_ERR_INVALID), store, or run
  * guest code. It may be called more than once for one object in one
- * collection (when the mark stack overflows), so it must be idempotent.
+ * collection (when the mark stack overflows), so it must be idempotent. It
+ * reads the object's own payload and memory the object owns, and no other heap
+ * object: with barrier-verify on, it is also run on an object found dead, just
+ * before that object's `destroy`, to drop the shadow of the slots it reports,
+ * and by then the objects its neighbours pointed at may already have been
+ * freed in the same sweep.
  *
  * @param tracer The tracer.
  * @param payload The object's payload.

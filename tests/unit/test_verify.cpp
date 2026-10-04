@@ -28,7 +28,7 @@ struct Boxed {
 void boxed_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_word(t, &static_cast<Boxed *>(payload)->word);
 }
-const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr};
+const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr, nullptr, nullptr};
 
 /* 48 bytes, but only the first slot is traced; the rest is data. */
 struct Wide {
@@ -38,7 +38,7 @@ struct Wide {
 void wide_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, &static_cast<Wide *>(payload)->traced);
 }
-const GRHEAP_Type kWide = {"wide", sizeof(Wide), wide_trace, nullptr, nullptr};
+const GRHEAP_Type kWide = {"wide", sizeof(Wide), wide_trace, nullptr, nullptr, nullptr, nullptr};
 
 uint64_t violations_of(HeapWorld & w) {
   uint64_t v = 12345;
@@ -214,7 +214,7 @@ TEST_F(VerifyTest, AStoreToAnUntracedSlotIsForgottenWithItsObjectToo) {
       [](GRHEAP_Tracer * t, void * q) {
         grheap_trace_slot(t, &static_cast<Wide *>(q)->data[1]);
       },
-      nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr};
   void * q;
   ASSERT_EQ(grheap_alloc(w.heap, &kOver, &q), GRHEAP_OK);
   EXPECT_EQ(q, p);
@@ -419,7 +419,7 @@ TEST_F(VerifyTest, RefusesNullAndNonOwnersAndACallFromInsideATrace) {
         uint64_t x;
         inside = grheap_verify(the_heap, &x);
       },
-      nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr};
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &tracing, &p), GRHEAP_OK);
   GRHEAP_Handle * h;

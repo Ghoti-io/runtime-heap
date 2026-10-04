@@ -99,7 +99,7 @@ TEST_F(IdsTest, TheIdIsForgottenBeforeTheDestroyHookRuns) {
         void * out;
         seen = grheap_object_of_id(the_heap, watched, &out);
       },
-      nullptr};
+      nullptr, nullptr, nullptr};
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &spy, &p), GRHEAP_OK);
   ASSERT_EQ(grheap_id_of(w.heap, p, &watched), GRHEAP_OK);
@@ -230,7 +230,7 @@ TEST_F(IdsTest, IssuingFromInsideADestroyHookIsRefusedAndAQueryIsNot) {
         void * out;
         queried = grheap_object_of_id(the_heap, 1, &out);
       },
-      nullptr};
+      nullptr, nullptr, nullptr};
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &probe, &p), GRHEAP_OK);
   Node * other = new_node(w.heap, 1);

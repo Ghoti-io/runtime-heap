@@ -61,6 +61,7 @@
 #include <ghoti.io/runtime-core/b/page.h>
 #include <ghoti.io/runtime-core/b/poll.h>
 #include <ghoti.io/runtime-core/b/roots.h>
+#include <ghoti.io/runtime-core/b/snapshot.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -123,8 +124,13 @@ struct GRHEAP_Handle {
 /** What a tracer is doing with the slots a `trace` function reports. */
 typedef enum {
   GRHEAP_TRACE_MARK = 0, ///< Marking: decode the slot and mark its target.
-  GRHEAP_TRACE_VERIFY    ///< Barrier-verify: compare the slot with its shadow.
+  GRHEAP_TRACE_VERIFY,   ///< Barrier-verify: compare the slot with its shadow.
+  GRHEAP_TRACE_IMAGE,    ///< An image take: turn the slot into an index.
+  GRHEAP_TRACE_SHADOW    ///< After a restore: record the slot as stored.
 } GRHEAP_TraceMode;
+
+struct GRHEAP_Take; /* image.c */
+struct GRHEAP_Pending; /* image.c */
 
 /** What a `trace` function is handed. */
 struct GRHEAP_Tracer {
@@ -133,6 +139,9 @@ struct GRHEAP_Tracer {
   const GRHEAP_Type * type; ///< VERIFY: the object being walked.
   void * payload;           ///< VERIFY: its payload.
   uint64_t found;           ///< VERIFY: violations found by this walk.
+  struct GRHEAP_Take * take; ///< IMAGE: the take in progress.
+  unsigned char * base;     ///< IMAGE: the copy of the payload being walked.
+  size_t size;              ///< IMAGE: its size.
 };
 
 /** One shadow slot: where, and the last value stored through a grheap_store. */
@@ -208,6 +217,8 @@ struct GRHEAP_Heap {
   size_t * id_index;                  ///< Object -> position + 1; open addressing.
   size_t id_index_cap;                ///< A power of two, or 0.
   uint64_t next_id;                   ///< The last ID issued.
+
+  struct GRHEAP_Pending * pending;    ///< A restore between APPLY and COMMIT.
 
   unsigned busy;                      ///< Inside a collection, trace or destroy.
   uint64_t since_collect;             ///< Cell bytes allocated since the last.
@@ -424,7 +435,44 @@ GRHEAP_INTERNAL_API void grheap_weak_each_slot(const GRHEAP_Type * type,
 /** Empties the registry (arena reset). */
 GRHEAP_INTERNAL_API void grheap_weak_free(GRHEAP_Heap * heap);
 
+/* ---- image.c ---------------------------------------------------------- */
+
+/** An IMAGE-mode tracer reports a slot (encoded: a codec word; else a raw
+ *  pointer). */
+GRHEAP_INTERNAL_API void grheap_image_trace(
+    GRHEAP_Tracer * tracer, void * slot, bool encoded);
+
+/** Frees a restore that was never settled (the heap's destruction). */
+GRHEAP_INTERNAL_API void grheap_pending_free(GRHEAP_Heap * heap);
+
+/** The heap key's snapshot hooks (core's types; the heap has one blob). */
+GRHEAP_INTERNAL_API GRCORE_Result grheap_key_snapshot(
+    GRCORE_Context * context, void * value, GRCORE_SnapshotWriter * writer);
+GRHEAP_INTERNAL_API GRCORE_Result grheap_key_restore(GRCORE_Context * context,
+    void * value, GRCORE_SnapshotReader * reader, void * env,
+    GRCORE_RestoreMode mode);
+GRHEAP_INTERNAL_API GRCORE_Result grheap_key_settle(GRCORE_Context * context,
+    void * value, void * env, GRCORE_SettleMode mode);
+
 /* ---- id.c ------------------------------------------------------------- */
+
+/** The stable ID of `object` if it has one, else 0. Never issues one. */
+GRHEAP_INTERNAL_API uint64_t grheap_id_lookup(
+    const GRHEAP_Heap * heap, const void * object);
+
+/** Makes room for `total` entries in all (a restore's count), or false with
+ *  nothing changed. */
+GRHEAP_INTERNAL_API bool grheap_ids_reserve_total(
+    GRHEAP_Heap * heap, size_t total);
+
+/** Adopts `count` entries a restore wrote at `heap->ids[0..count)` (room was
+ *  reserved), in any order: sorts them, rebuilds the index, sets the next ID to
+ *  issue. */
+GRHEAP_INTERNAL_API void grheap_ids_adopt(
+    GRHEAP_Heap * heap, size_t count, uint64_t last_id);
+
+/** Forgets what a restore adopted, and the numbering with it. */
+GRHEAP_INTERNAL_API void grheap_ids_unadopt(GRHEAP_Heap * heap);
 
 /** After marking: forgets the ID of every unmarked object. */
 GRHEAP_INTERNAL_API void grheap_ids_drop_dead(GRHEAP_Heap * heap);

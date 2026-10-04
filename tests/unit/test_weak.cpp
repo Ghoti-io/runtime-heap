@@ -108,12 +108,12 @@ const GRHEAP_WeakSpec kQuietSpec = {GRHEAP_WEAK_CELL, offsetof(WeakCell, target)
     0, 0, false, nullptr};
 
 const GRHEAP_Type kWeakCell = {"weak-cell", sizeof(WeakCell), weak_trace,
-    cell_destroy, &kCellSpec};
+    cell_destroy, &kCellSpec, nullptr, nullptr};
 const GRHEAP_Type kQuietCell = {"quiet-cell", sizeof(WeakCell), weak_trace,
-    cell_destroy, &kQuietSpec};
-const GRHEAP_Type kEph = {"ephemeron", sizeof(Eph), nullptr, nullptr, &kEphSpec};
+    cell_destroy, &kQuietSpec, nullptr, nullptr};
+const GRHEAP_Type kEph = {"ephemeron", sizeof(Eph), nullptr, nullptr, &kEphSpec, nullptr, nullptr};
 const GRHEAP_Type kWordCell = {"word-cell", sizeof(WordCell), nullptr, nullptr,
-    &kWordSpec};
+    &kWordSpec, nullptr, nullptr};
 
 /* A target to point at: a Node with a destroy hook that logs its id. */
 Node * target(HeapWorld & w, uint64_t id) { return new_node(w.heap, id); }
@@ -426,7 +426,7 @@ TEST_F(WeakTest, AnEphemeronWithAnIntegerKeyKeepsItsValue) {
   config.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
   HeapWorld w(config);
   static const GRHEAP_Type word_eph = {"word-eph", 24, nullptr, nullptr,
-      &kWordEphSpec};
+      &kWordEphSpec, nullptr, nullptr};
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &word_eph, &p), GRHEAP_OK);
   auto * words = static_cast<uint64_t *>(p);
@@ -548,9 +548,9 @@ TEST_F(WeakTest, ASpecWhoseSlotsDoNotFitThePayloadIsRefusedAtAllocation) {
   static const GRHEAP_WeakSpec same = {GRHEAP_EPHEMERON, 0, 8, 8, false, nullptr};
   static const GRHEAP_WeakSpec bad = {static_cast<GRHEAP_WeakKind>(7), 0, 0, 0,
       false, nullptr};
-  const GRHEAP_Type t1 = {"m", 32, nullptr, nullptr, &misaligned};
-  const GRHEAP_Type t2 = {"s", 32, nullptr, nullptr, &same};
-  const GRHEAP_Type t3 = {"b", 32, nullptr, nullptr, &bad};
+  const GRHEAP_Type t1 = {"m", 32, nullptr, nullptr, &misaligned, nullptr, nullptr};
+  const GRHEAP_Type t2 = {"s", 32, nullptr, nullptr, &same, nullptr, nullptr};
+  const GRHEAP_Type t3 = {"b", 32, nullptr, nullptr, &bad, nullptr, nullptr};
   // Ephemeron slots: the value slot starting at the payload's end, and a
   // misaligned key and value.
   static const GRHEAP_WeakSpec at_end = {GRHEAP_EPHEMERON, 0, 0, 32, false,
@@ -559,9 +559,9 @@ TEST_F(WeakTest, ASpecWhoseSlotsDoNotFitThePayloadIsRefusedAtAllocation) {
       nullptr};
   static const GRHEAP_WeakSpec odd_value = {GRHEAP_EPHEMERON, 0, 0, 12, false,
       nullptr};
-  const GRHEAP_Type t4 = {"e", 32, nullptr, nullptr, &at_end};
-  const GRHEAP_Type t5 = {"k", 32, nullptr, nullptr, &odd_key};
-  const GRHEAP_Type t6 = {"v", 32, nullptr, nullptr, &odd_value};
+  const GRHEAP_Type t4 = {"e", 32, nullptr, nullptr, &at_end, nullptr, nullptr};
+  const GRHEAP_Type t5 = {"k", 32, nullptr, nullptr, &odd_key, nullptr, nullptr};
+  const GRHEAP_Type t6 = {"v", 32, nullptr, nullptr, &odd_value, nullptr, nullptr};
   EXPECT_EQ(grheap_alloc(w.heap, &t4, &p), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_alloc(w.heap, &t5, &p), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_alloc(w.heap, &t6, &p), GRHEAP_ERR_INVALID);

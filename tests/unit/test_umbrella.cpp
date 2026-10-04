@@ -35,7 +35,7 @@ TEST(Umbrella, ReachesEveryHeaderOfTheAPI) {
   EXPECT_EQ(grheap_store(nullptr, nullptr, nullptr, nullptr),
       GRHEAP_ERR_INVALID);
   grheap_trace_slot(nullptr, nullptr); // ignored
-  GRHEAP_Type type = {"t", 8, nullptr, nullptr, nullptr};
+  GRHEAP_Type type = {"t", 8, nullptr, nullptr, nullptr, nullptr, nullptr};
   EXPECT_EQ(type.size, 8u);
   // id.h, the weak spec in type.h, the instruments in options.h and store.h.
   uint64_t id = 0;
@@ -45,6 +45,16 @@ TEST(Umbrella, ReachesEveryHeaderOfTheAPI) {
   GRHEAP_WeakSpec weak = {GRHEAP_WEAK_CELL, 0, 0, 0, false, nullptr};
   EXPECT_EQ(weak.kind, GRHEAP_WEAK_CELL);
   EXPECT_EQ(grheap_options_set_torture(nullptr, true), GRHEAP_ERR_INVALID);
+}
+
+TEST(Umbrella, ReachesHeapImages) {
+  // image.h through the umbrella alone.
+  EXPECT_EQ(grheap_image_refcount(nullptr), 0u);
+  EXPECT_EQ(grheap_image_retain(nullptr), nullptr);
+  EXPECT_EQ(grheap_image_take(nullptr, nullptr, nullptr), GRHEAP_ERR_INVALID);
+  GRHEAP_RestoreEnv env = {nullptr, nullptr};
+  EXPECT_EQ(grheap_image_instantiate(nullptr, nullptr, &env), GRHEAP_ERR_INVALID);
+  EXPECT_STREQ(GRHEAP_SNAPSHOT_KEY_NAME, "runtime-heap");
 }
 
 TEST(Umbrella, TheStabilityConstantsAreThoseTheDocumentationStates) {

@@ -56,6 +56,7 @@
 
 #include <ghoti.io/runtime-core/b/context.h>
 #include <ghoti.io/runtime-core/b/group.h>
+#include <ghoti.io/runtime-core/b/roots.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -146,8 +147,8 @@ static void node_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &n->other);
 }
 
-static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL};
-static const GRHEAP_Type leaf_type = {"leaf", 16, NULL, NULL, NULL};
+static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL, NULL, NULL};
+static const GRHEAP_Type leaf_type = {"leaf", 16, NULL, NULL, NULL, NULL, NULL};
 
 /* A small object, unreachable as soon as it is made: the price of an
  * allocation including the collections it triggers, the way a program that
@@ -263,7 +264,7 @@ static void weak_cell_trace(GRHEAP_Tracer * tracer, void * payload) {
 static const GRHEAP_WeakSpec weak_spec = {
     GRHEAP_WEAK_CELL, offsetof(WeakCell, target), 0, 0, false, NULL};
 static const GRHEAP_Type weak_cell_type = {
-    "weak-cell", sizeof(WeakCell), weak_cell_trace, NULL, &weak_spec};
+    "weak-cell", sizeof(WeakCell), weak_cell_trace, NULL, &weak_spec, NULL, NULL};
 
 /* One collection that clears 1,000 weak cells: the targets are made and
  * stored, nothing else holds them, and the collection finds them dead, nulls
@@ -351,6 +352,98 @@ static uint64_t id_lookup_run(uint64_t iterations) {
   return sink;
 }
 
+/* ---- images ------------------------------------------------------------ */
+
+static void image_roots_enumerate(
+    GRCORE_Context * context, void * value, const GRCORE_RootVisitor * visitor) {
+  (void)context;
+  visitor->slot(visitor->user, value);
+}
+
+static const GRCORE_RootSource image_roots = {"bench", image_roots_enumerate};
+
+static const GRHEAP_Type * image_resolve(void * user, const char * name) {
+  (void)user;
+  return strcmp(name, "node") == 0 ? &node_type : NULL;
+}
+
+/* The 10,000-node graph of `mark_sweep_run`, rooted by a root source instead
+ * of a C root (an image refuses a C root), in a world of its own. */
+static void image_graph(World * w, uint64_t * head_word) {
+  world_open(w);
+  if (grcore_context_add_root_source(w->context, &image_roots, head_word) !=
+      GRCORE_OK) {
+    setup_failed("root source");
+  }
+  void * nodes[GRAPH_NODES];
+  uint64_t seed = 88172645463325252ull;
+  for (uint32_t i = 0; i < GRAPH_NODES; i++) {
+    void * p;
+    if (grheap_alloc(w->heap, &node_type, &p) != GRHEAP_OK) {
+      setup_failed("alloc node");
+    }
+    Node * n = p;
+    n->id = i;
+    n->next = (void *)(uintptr_t)*head_word;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    n->other = i == 0 ? NULL : nodes[seed % i];
+    nodes[i] = p;
+    *head_word = (uint64_t)(uintptr_t)p;
+  }
+}
+
+/* One image of that graph taken and released. An iteration is one take. */
+static uint64_t image_take_run(uint64_t iterations) {
+  World w;
+  uint64_t head = 0;
+  image_graph(&w, &head);
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRHEAP_Image * image;
+    if (grheap_image_take(w.heap, NULL, &image) != GRHEAP_OK) {
+      setup_failed("image take");
+    }
+    sink += grheap_image_size(image);
+    grheap_image_release(image);
+  }
+  world_close(&w);
+  return sink;
+}
+
+/* One image of that graph instantiated into a world of its own, including
+ * making and destroying that world (a heap must be empty to take an image, and
+ * an empty one is a new one). An iteration is one such restore. */
+static uint64_t image_restore_run(uint64_t iterations) {
+  World src;
+  uint64_t head = 0;
+  image_graph(&src, &head);
+  GRHEAP_Image * image;
+  if (grheap_image_take(src.heap, NULL, &image) != GRHEAP_OK) {
+    setup_failed("image take");
+  }
+  uint64_t sink = 0;
+  GRHEAP_RestoreEnv env = {image_resolve, NULL};
+  for (uint64_t i = 0; i < iterations; i++) {
+    World w;
+    uint64_t root = 0;
+    world_open(&w);
+    if (grcore_context_add_root_source(w.context, &image_roots, &root) !=
+        GRCORE_OK) {
+      setup_failed("root source");
+    }
+    if (grheap_image_instantiate(w.heap, image, &env) != GRHEAP_OK) {
+      setup_failed("image instantiate");
+    }
+    sink += root != 0;
+    world_close(&w);
+  }
+  grheap_image_release(image);
+  world_close(&src);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"alloc-small", alloc_small_run, 20u * 1000u * 1000u, 100000u},
@@ -359,6 +452,8 @@ static const Case cases[] = {
     {"store", store_run, 200u * 1000u * 1000u, 100000u},
     {"weak-clear-1k", weak_clear_run, 20000u, 3u},
     {"id-lookup", id_lookup_run, 50u * 1000u * 1000u, 100000u},
+    {"image-take-10k", image_take_run, 2000u, 3u},
+    {"image-restore-10k", image_restore_run, 1000u, 3u},
 };
 
 #define REPEATS 7
@@ -403,7 +498,7 @@ int main(int argc, char ** argv) {
           cases[c].name);
       return 1;
     }
-    printf("%-14s best %10.3f ns/op  median %10.3f ns/op  (%llu ops x %d, "
+    printf("%-18s best %10.3f ns/op  median %10.3f ns/op  (%llu ops x %d, "
            "check %016llx)\n",
         cases[c].name, best, median, (unsigned long long)n, repeats,
         (unsigned long long)sink);

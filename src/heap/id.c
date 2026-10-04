@@ -45,6 +45,7 @@
 
 #include "heap_internal.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static uint64_t mix(uint64_t x) {
@@ -90,14 +91,11 @@ static size_t index_find(const GRHEAP_Heap * heap, const void * object) {
   return SIZE_MAX;
 }
 
-/* Room for one more entry in both structures, or false with nothing changed.
- * The new index is made first: if the array then cannot grow, the index is
- * dropped and the old pair is intact. */
-static bool reserve(GRHEAP_Heap * heap) {
-  if (heap->nids < heap->ids_cap) {
-    return true;
-  }
-  size_t cap = heap->ids_cap == 0 ? 16u : heap->ids_cap * 2u;
+/* Room for `cap` entries in both structures, `cap` a power of two above the
+ * current capacity, or false with nothing changed. The new index is made
+ * first: if the array then cannot grow, the index is dropped and the old pair
+ * is intact. */
+static bool grow_to(GRHEAP_Heap * heap, size_t cap) {
   if (cap > SIZE_MAX / (2u * sizeof(size_t))) {
     return false;
   }
@@ -122,6 +120,56 @@ static bool reserve(GRHEAP_Heap * heap) {
   heap->id_index_cap = index_cap;
   index_rebuild(heap);
   return true;
+}
+
+/* Room for one more entry in both structures, or false with nothing changed. */
+static bool reserve(GRHEAP_Heap * heap) {
+  if (heap->nids < heap->ids_cap) {
+    return true;
+  }
+  return grow_to(heap, heap->ids_cap == 0 ? 16u : heap->ids_cap * 2u);
+}
+
+uint64_t grheap_id_lookup(const GRHEAP_Heap * heap, const void * object) {
+  size_t pos = index_find(heap, object);
+  return pos == SIZE_MAX ? 0 : heap->ids[pos].id;
+}
+
+bool grheap_ids_reserve_total(GRHEAP_Heap * heap, size_t total) {
+  if (total <= heap->ids_cap) {
+    return true;
+  }
+  size_t cap = heap->ids_cap == 0 ? 16u : heap->ids_cap;
+  while (cap < total) {
+    if (cap > SIZE_MAX / 2u) {
+      return false;
+    }
+    cap *= 2u;
+  }
+  return grow_to(heap, cap);
+}
+
+static int compare_ids(const void * a, const void * b) {
+  uint64_t x = ((const GRHEAP_IdEntry *)a)->id;
+  uint64_t y = ((const GRHEAP_IdEntry *)b)->id;
+  return (x > y) - (x < y);
+}
+
+void grheap_ids_adopt(GRHEAP_Heap * heap, size_t count, uint64_t last_id) {
+  if (count > 1) {
+    qsort(heap->ids, count, sizeof *heap->ids, compare_ids);
+  }
+  heap->nids = count;
+  heap->next_id = last_id;
+  heap->stats.ids_issued = last_id;
+  heap->stats.ids_live = count;
+  index_rebuild(heap);
+}
+
+void grheap_ids_unadopt(GRHEAP_Heap * heap) {
+  grheap_ids_clear(heap);
+  heap->next_id = 0;
+  heap->stats.ids_issued = 0;
 }
 
 GRHEAP_Result grheap_id_of(

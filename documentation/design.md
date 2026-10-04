@@ -6,7 +6,8 @@ with `gc_store`, registered roots, handles, pins and an arena mode, taken from
 the runtime stack's architecture spine (AD-2, AD-3, AD-11, AD-12, AD-13, AD-14,
 AD-16 to AD-21, AD-26), with weak cells, ephemerons, stable IDs and an identity
 hash, the two verification instruments (GC torture and barrier-verify), the
-barrier contract and CI. What is still not here is listed at the end.
+barrier contract, CI, and heap images (the heap's half of context snapshots).
+What is still not here is listed at the end.
 
 ## What this library is
 
@@ -300,8 +301,11 @@ dropped: it checks an a/b split this library does not have. It adds
 `make bench` runs the harness (AD-26): a calibration case, then alloc small,
 alloc 1 KiB, one full mark and sweep of a 10,000-node graph, `grheap_store`,
 and (torture off, which is the baseline a tortured run is read against) the
-clearing of 1,000 weak cells and a stable-ID lookup. No numeric budget is asserted; AD-26 records budgets once a first measurement
-exists. `make test` runs it once, with a tiny workload, to prove it builds,
+clearing of 1,000 weak cells and a stable-ID lookup, and an image of that
+10,000-node graph taken, and instantiated into a world made for it (the
+destination context is part of the figure: a heap must be empty to take an
+image). No numeric budget is asserted; AD-26 records budgets once a first
+measurement exists. `make test` runs it once, with a tiny workload, to prove it builds,
 links and runs.
 
 ## GC torture
@@ -602,6 +606,106 @@ other direction needs.
 object that has been asked for its hash is its ID's mix, and asking assigns the
 ID.
 
+## Heap images
+
+A heap image (`image.h`) is the heap's half of a context snapshot: the objects
+a context's roots reach, frozen in a form that holds no address, so that many
+contexts can start from the same warmed-up heap. The spine reserves the seam
+(AD-12: nothing is keyed by address; Reserved Seams: "no host pointer stored in
+a heap"), and CAP-11 is what it is for.
+
+**What an image is.** *Data about objects*, not memory. For each object
+reachable from the roots a context's sources report: its type's *name*, its
+payload bytes with every slot the type's `trace` reports turned into an *index*
+into the image, its stable ID if it had one, and whatever extra bytes the type's
+`snapshot` hook wrote. For each precise root slot: a plain word, or an index.
+The next ID to issue, and the value codec, are copied. The image is a single
+block of bytes with a header of section offsets (native byte order: it is an
+in-memory object, and a byte format or a file is **not done**), is
+reference-counted with an atomic count, is immutable, may outlive the heap it
+came from, and can be instantiated any number of times and on any thread. It
+takes no heap id: a restored heap has its own.
+
+**How it is taken.** By the same walk the collector trusts. The roots are
+enumerated through the context's sources in the collector's order; every object
+found is numbered in discovery order, copied, and walked with its type's `trace`
+and the tracer in a third mode (beside MARK and VERIFY): IMAGE. A slot that
+names a live object becomes a record `{offset, target, kind}`, and the copy's
+slot is cleared (zero for a raw pointer; for an encoded word, the word without
+its address bits, so a tag the codec has survives). A type that is correct for
+the collector is correct for an image, and the one new duty is naming what is
+not heap. The take refuses, with `ERR_INVALID` and no change, whatever it
+cannot carry: a registered C root (a pointer the heap cannot rewrite), a handle
+or a pin (a keep-alive the destination cannot recreate), any weak cell or
+ephemeron (the registry is non-empty, or a reachable type has a `weak` spec), a
+conservative range that a source reports as non-empty (the words in it are
+guesses), a type with no name or one that shares its name with another type, a
+slot reported outside its payload, and a pointer word the codec cannot encode
+back to itself. A root or a payload slot that names nothing live (a stale word)
+is not an error: the collector skips it, so the image carries the slot cleared,
+and no address.
+
+**How it is restored.** In three steps, which the heap key spreads over the
+phases of a context restore: APPLY makes every object (a cell from the heap's
+own allocator, charged to the context's memory budget; the heap's allocation
+path, where a collection can run, is not used, so none can), copies the
+payloads, patches the recorded slots with the new addresses, runs the types'
+`restore` hooks in the image's order with the heap busy, records the slots for
+barrier-verify (so that every restored reference counts as stored through the
+barrier, which is what the instrument requires of a heap object), and adopts the
+stable IDs; PREPARE checks that the context's root sources report as many
+slots as the image has and no range; COMMIT writes them. The ID table is rebuilt
+from the new addresses, which is the one place the heap keys by address. A
+failure before COMMIT removes exactly the objects APPLY made: in a collected
+heap every other cell is marked and a sweep frees the rest, so the sweep's own
+bookkeeping applies (the `destroy` hooks run once, shadow entries are forgotten,
+free lists are rebuilt). An arena cannot free one object, so what a failed
+restore made stays until the arena is reset, unreachable.
+
+A destination that does not match is refused *before* anything changes (the
+CHECK pass of a context restore): a different value codec, a type name the host's
+resolver does not know, a resolved type with a weak spec, extra bytes for a type
+with no `restore`. `grheap_image_instantiate` also refuses a heap that holds an
+object or an ID. (A context restore into a fresh execution is the one place a heap
+is not empty: the engine has already made an object of its own, the preallocated
+out-of-memory error, which the restore leaves behind unreachable once its root
+slot is overwritten; the key's restore does not insist on an empty heap, only on a
+fresh ID numbering.)
+
+**Types with host pointers.** A payload that holds an address outside the heap
+(a pointer to a library member, to a registry) cannot be in an image as it is.
+The type gives `snapshot` and `restore` hooks: `snapshot` is handed a *copy* of
+the payload, clears the pointer in it and writes what it named, by name;
+`restore` is handed the new object, resolves the name at the destination and
+stores the pointer. A type with neither is copied verbatim, so its documentation
+must say it holds nothing but plain data and the slots `trace` reports. The test
+that proves it holds is a scan of an image for every address of the source (the
+objects, the roots, the types), with a type that forgot its hook as the control
+that the scan finds one.
+
+**Rejected alternatives.**
+
+- *Restoring at the same addresses.* The page provider picks addresses, so the
+  restore would have to ask it for a particular one. That ties a snapshot to one
+  process layout, makes sharing between contexts impossible (two contexts cannot
+  hold one address), and fails whenever the address is taken. It also carries
+  every function pointer in a type descriptor into a "frozen" object.
+- *Copying whole spans.* It is the cheapest take, and it copies free cells,
+  stale words and padding, whose contents are not the program's; it is the same
+  address problem; and it makes the image's size the heap's footprint instead
+  of the live data's. The walk the collector already trusts takes only what is
+  reachable.
+- *A type registry in the heap.* The heap would then know every type of every
+  engine and resolve names itself. The host knows its types (a resolver is a
+  small function over a table it already has), and a registry in the heap is one
+  more piece of process-wide state (CONVENTIONS section 13).
+- *Rewriting slots in place in the live heap and copying the result.* It makes
+  the take mutate what it is photographing, and a failure half way leaves the
+  source corrupt; the copy is cleared, not the original.
+- *Running `trace` again at restore to find the slots.* It depends on the
+  payload that the take cleared, and `trace` is free to branch on a slot that is
+  now an index; the recorded offsets do not.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the jobs AD-16 names for `gc`: both compilers
@@ -614,7 +718,10 @@ been run: it was checked only for being valid YAML that names these jobs.
 
 ## What is not here
 
-No moving, no generations, no concurrent or incremental marking, and no stack
+No byte format or file for a heap image, and no sharing of one between
+processes (an image is an in-memory object). No image of a heap with a weak
+cell, an ephemeron, a C root, a handle, a pin or a conservative range. No image
+that follows a slot outside its object's payload. No moving, no generations, no concurrent or incremental marking, and no stack
 scanning of its own: a stack's words come from a root source, the embedder's or
 A's. No real barrier (store or remembered-set work): the contract above is the
 design, and barrier-verify polices the discipline. No shared heap: the shared

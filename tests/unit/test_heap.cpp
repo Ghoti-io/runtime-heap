@@ -132,7 +132,7 @@ TEST(Heap, CreateMovesAllocationFailureIntoItsResultAndLeavesNoHeap) {
 
 TEST(Alloc, ReturnsAZeroFilledSixteenByteAlignedPayloadOfTheTypesSize) {
   HeapWorld w;
-  const GRHEAP_Type big = {"big", 100, nullptr, nullptr, nullptr};
+  const GRHEAP_Type big = {"big", 100, nullptr, nullptr, nullptr, nullptr, nullptr};
   void * p = nullptr;
   ASSERT_EQ(grheap_alloc(w.heap, &big, &p), GRHEAP_OK);
   ASSERT_NE(p, nullptr);
@@ -298,7 +298,7 @@ TEST(Alloc, InsideATraceFunctionIsRefusedAndChangesNothing) {
         void * q;
         inside_trace = grheap_alloc(the_heap, &kLeaf, &q);
       },
-      nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr};
   void * root = nullptr;
   ASSERT_EQ(grheap_alloc(w.heap, &trying, &root), GRHEAP_OK);
   ASSERT_EQ(grheap_root_add(w.heap, &root), GRHEAP_OK);
@@ -320,7 +320,7 @@ TEST(Alloc, InsideADestroyFunctionIsRefusedAndSoIsACollection) {
     void * q;
     alloc_in_destroy = grheap_alloc(the_heap, &kLeaf, &q);
     collect_in_destroy = grheap_collect(the_heap);
-  }, nullptr};
+  }, nullptr, nullptr, nullptr};
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &dying, &p), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
@@ -418,7 +418,7 @@ TEST(Accounting, DestroyingTheContextRunsEveryHookAndFreesEverything) {
     // Two live objects and a large one with a hook.
     static const GRHEAP_Type big = {"big", 40000, nullptr, [](void *) {
       destroyed_log().push_back(3);
-    }, nullptr};
+    }, nullptr, nullptr, nullptr};
     void * p;
     ASSERT_EQ(grheap_alloc(w.heap, &big, &p), GRHEAP_OK);
     (void)a;
@@ -446,7 +446,7 @@ void probe_destroy(GRCORE_Context * context, void * value) {
 
 /* Registered first, so it is torn down last: after the heap's own key. */
 const GRCORE_Key kProbeKey = {"meter-probe", GRCORE_CARDINALITY_ONE,
-    GRCORE_PHASE_NONE, probe_destroy, nullptr};
+    GRCORE_PHASE_NONE, probe_destroy, nullptr, nullptr, nullptr, nullptr};
 
 MeterProbe teardown_meter(bool with_heap) {
   MeterProbe probe;
@@ -494,7 +494,7 @@ int main(int argc, char ** argv) {
 // 16-byte-rounded cell it asked for. Allocation and sweep must count the same.
 TEST(Stats, LiveBytesAgreeBeforeAndAfterACollectionForAnyClassSize) {
   HeapWorld w;
-  static const GRHEAP_Type kBlob = {"blob", 0, nullptr, nullptr, nullptr};
+  static const GRHEAP_Type kBlob = {"blob", 0, nullptr, nullptr, nullptr, nullptr, nullptr};
   // 112 + 17 -> a 144-byte need, held in the 160 class; 1000 -> a 1024 class.
   for (size_t bytes : {size_t(112), size_t(1000), size_t(130), size_t(8000)}) {
     void * p;
@@ -518,7 +518,7 @@ static void hook_destroy(void *) {
 // A destroy hook runs with the heap busy and may not retarget a handle.
 TEST(Stats, AHandleCannotBeRetargetedFromADestroyHook) {
   HeapWorld w(steady());
-  static const GRHEAP_Type kHooked = {"hooked", 8, nullptr, hook_destroy, nullptr};
+  static const GRHEAP_Type kHooked = {"hooked", 8, nullptr, hook_destroy, nullptr, nullptr, nullptr};
   void * dying;
   void * kept;
   ASSERT_EQ(grheap_alloc(w.heap, &kHooked, &dying), GRHEAP_OK);

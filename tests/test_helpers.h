@@ -245,13 +245,13 @@ inline void node_destroy(void * payload) {
   destroyed_log().push_back(static_cast<Node *>(payload)->id);
 }
 
-inline const GRHEAP_Type kNode = {"node", sizeof(Node), node_trace, node_destroy, nullptr};
+inline const GRHEAP_Type kNode = {"node", sizeof(Node), node_trace, node_destroy, nullptr, nullptr, nullptr};
 
 /* A node with no destroy hook, for the tests that count frees by statistics. */
-inline const GRHEAP_Type kPlainNode = {"plain", sizeof(Node), node_trace, nullptr, nullptr};
+inline const GRHEAP_Type kPlainNode = {"plain", sizeof(Node), node_trace, nullptr, nullptr, nullptr, nullptr};
 
 /* A leaf: no pointers, no hook. */
-inline const GRHEAP_Type kLeaf = {"leaf", 16, nullptr, nullptr, nullptr};
+inline const GRHEAP_Type kLeaf = {"leaf", 16, nullptr, nullptr, nullptr, nullptr, nullptr};
 
 inline Node * new_node(GRHEAP_Heap * heap, uint64_t id,
     const GRHEAP_Type * type = &kNode) {

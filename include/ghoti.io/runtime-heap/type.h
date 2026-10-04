@@ -38,6 +38,10 @@
 
 #include <ghoti.io/runtime-heap/macros.h>
 
+#include <ghoti.io/runtime-heap/core.h>
+
+#include <ghoti.io/runtime-core/b/context.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -79,6 +83,66 @@ typedef void (*GRHEAP_TraceFn)(GRHEAP_Tracer * tracer, void * payload);
  * @param payload The object's payload; its memory is still valid.
  */
 typedef void (*GRHEAP_DestroyFn)(void * payload);
+
+/**
+ * @brief Where a type's `snapshot` hook writes the extra bytes of one object
+ *   into a heap image. Opaque; valid only for the duration of the call.
+ */
+typedef struct GRHEAP_ImageWriter GRHEAP_ImageWriter;
+
+/** @brief Where a type's `restore` hook reads them back. Opaque; valid only for
+ *   the duration of the call. */
+typedef struct GRHEAP_ImageReader GRHEAP_ImageReader;
+
+/**
+ * @brief Prepares one object's payload for a heap image.
+ *
+ * An image holds no host pointer (AD-12). A type whose payload holds one (a
+ * pointer to a library member, to a registry, to memory outside the heap) must
+ * say what it points at by *name*, and clear the pointer: the hook is given a
+ * *copy* of the payload, already byte-for-byte what the object holds, with
+ * every slot `trace` reports already turned into an index, and it may change
+ * that copy and write bytes of its own with ::grheap_image_writer_write. It
+ * runs once per object in the image, in discovery order. It must not touch the
+ * heap, the original object or the context's state.
+ *
+ * A type with neither this nor `restore` is copied verbatim, so its payload
+ * must hold nothing but plain data and the slots `trace` reports.
+ *
+ * @param context The context the heap belongs to, for a hook that needs to
+ *   find its engine.
+ * @param payload The copy. Not the object.
+ * @param writer Where the object's extra bytes go.
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for an object that cannot be
+ *   captured (a host value that is not named anywhere), which refuses the whole
+ *   image; or ::GRHEAP_ERR_OOM and ::GRHEAP_ERR_LIMIT from the writer.
+ */
+typedef GRHEAP_Result (*GRHEAP_SnapshotFn)(
+    GRCORE_Context * context, void * payload, GRHEAP_ImageWriter * writer);
+
+/**
+ * @brief Rebuilds one object's host pointers from the bytes `snapshot` wrote.
+ *
+ * Called on the destination's new object, whose payload is the copy `snapshot`
+ * left and whose reference slots are already patched. It resolves names to
+ * pointers (the library, the member) and stores them, reading the bytes with
+ * ::grheap_image_reader_read. It runs after every object of the image exists,
+ * in the image's order, with the heap busy (an allocation is refused).
+ *
+ * If it fails the whole instantiation is undone, and the object's `destroy`
+ * hook is run on whatever the payload then holds, so `restore` must leave a
+ * payload that `destroy` can take (the pointers `snapshot` cleared are still
+ * cleared until it stores a resolved one).
+ *
+ * @param context The destination context.
+ * @param payload The new object's payload.
+ * @param reader The bytes `snapshot` wrote for this object.
+ * @param user The `user` of the ::GRHEAP_RestoreEnv the host passed.
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a name that does not resolve
+ *   at the destination, which refuses the restore.
+ */
+typedef GRHEAP_Result (*GRHEAP_RestoreFn)(GRCORE_Context * context,
+    void * payload, GRHEAP_ImageReader * reader, void * user);
 
 /** @brief What a weak spec describes. */
 typedef enum {
@@ -141,6 +205,17 @@ typedef struct GRHEAP_Type {
   GRHEAP_TraceFn trace;   ///< Reports pointer slots. NULL: a leaf object.
   GRHEAP_DestroyFn destroy; ///< Releases external resources. May be NULL.
   const GRHEAP_WeakSpec * weak; ///< A weak cell or ephemeron. May be NULL.
+  /**
+   * Prepares a payload for a heap image (image.h). May be NULL: the payload is
+   * then copied as it is, and the type promises it holds no host pointer. A
+   * type with a `weak` spec cannot be in an image at all.
+   *
+   * The two image hooks are last, so a static type written before them keeps
+   * working: C zero-fills the omitted initialisers.
+   */
+  GRHEAP_SnapshotFn snapshot;
+  /** Rebuilds the host pointers `snapshot` named. May be NULL. */
+  GRHEAP_RestoreFn restore;
 } GRHEAP_Type;
 
 /**

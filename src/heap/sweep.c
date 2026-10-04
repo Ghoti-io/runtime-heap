@@ -58,9 +58,18 @@ static size_t sweep_block(GRHEAP_Heap * heap, GRHEAP_Span * s) {
       void * payload = grheap_payload(s, index);
       const GRHEAP_Type * type = grheap_header(payload)->type;
       if (heap->verify != GRHEAP_VERIFY_OFF) {
-        /* Before `destroy`, so a hook sees no stale shadow of its own slots. */
+        /* Before `destroy`, so a hook sees no stale shadow of its own slots,
+         * and while whatever the object points at is still there to be
+         * walked. The cell's own range goes first; then every slot the
+         * object's trace reports, which includes slots that are not in the
+         * cell (a buffer the object owns), whose shadow would otherwise
+         * outlive it and be compared with whatever reuses that memory. */
         grheap_shadow_forget_range(heap, (uintptr_t)payload,
             (size_t)(s->cell - GRHEAP_HEADER_BYTES));
+        if (type->trace != NULL) {
+          GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_FORGET};
+          type->trace(&tracer, payload);
+        }
       }
       if (type->destroy != NULL) {
         type->destroy(payload);

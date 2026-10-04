@@ -169,6 +169,10 @@ void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
     grheap_shadow_set(tracer->heap, (uintptr_t)slot, (uint64_t)(uintptr_t)*slot);
     return;
   }
+  if (tracer->mode == GRHEAP_TRACE_FORGET) {
+    grheap_shadow_set(tracer->heap, (uintptr_t)slot, 0); /* zero removes it */
+    return;
+  }
   if (tracer->mode == GRHEAP_TRACE_RETAIN) {
     grheap_retention_trace(tracer, slot, false);
     return;
@@ -190,6 +194,10 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
   }
   if (tracer->mode == GRHEAP_TRACE_SHADOW) {
     grheap_shadow_set(tracer->heap, (uintptr_t)slot, *slot);
+    return;
+  }
+  if (tracer->mode == GRHEAP_TRACE_FORGET) {
+    grheap_shadow_set(tracer->heap, (uintptr_t)slot, 0);
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_RETAIN) {

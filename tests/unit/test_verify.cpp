@@ -221,6 +221,55 @@ TEST_F(VerifyTest, AStoreToAnUntracedSlotIsForgottenWithItsObjectToo) {
   EXPECT_EQ(violations_of(w), 0u);
 }
 
+namespace {
+
+/* Slots that are not in any heap object: a buffer a dying object owns and
+ * whose memory something else then reuses, zeroed. */
+void * g_buffer[4];
+
+struct Owner {
+  uint64_t id;
+};
+void owner_trace(GRHEAP_Tracer * t, void * payload) {
+  (void)payload;
+  grheap_trace_slot(t, &g_buffer[0]);
+  grheap_trace_slot(t, &g_buffer[1]);
+}
+void owner_destroy(void *) { std::memset(g_buffer, 0, sizeof g_buffer); }
+const GRHEAP_Type kOwner = {"owner", sizeof(Owner), owner_trace, owner_destroy, nullptr, nullptr, nullptr};
+
+} // namespace
+
+TEST_F(VerifyTest, ADeadObjectsShadowOutsideItsCellIsForgottenWithIt) {
+  // The object's trace reports slots in a buffer it owns, outside its cell. A
+  // store into one with the object as holder is itself a violation ("the slot
+  // is not inside the holder") and is counted when it happens; what must not
+  // happen is a second, false violation later, when the object is gone, the
+  // buffer is zeroed and reused, and another object reports the same address.
+  HeapWorld w(verified());
+  std::memset(g_buffer, 0, sizeof g_buffer);
+  Node * keep = new_node(w.heap, 1);
+  GRHEAP_Handle * h;
+  ASSERT_EQ(grheap_handle_create(w.heap, keep, &h), GRHEAP_OK);
+  void * p;
+  ASSERT_EQ(grheap_alloc(w.heap, &kOwner, &p), GRHEAP_OK);
+  ASSERT_EQ(grheap_store(w.heap, p, &g_buffer[0], keep), GRHEAP_OK);
+  uint64_t at_store = w.stats().verify_violations;
+  EXPECT_GE(at_store, 1u) << "the store named a holder that does not contain the slot";
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK); // the owner is garbage; its destroy zeroes the buffer
+  EXPECT_FALSE(grheap_contains(w.heap, p));
+  // A new live object reports the same slots, which now hold zero.
+  void * q;
+  ASSERT_EQ(grheap_alloc(w.heap, &kOwner, &q), GRHEAP_OK);
+  GRHEAP_Handle * hq;
+  ASSERT_EQ(grheap_handle_create(w.heap, q, &hq), GRHEAP_OK);
+  uint64_t before = w.stats().verify_violations;
+  EXPECT_EQ(violations_of(w), 0u) << "a stale entry for a dead object's slot was compared";
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(w.stats().verify_violations, before);
+  ASSERT_EQ(grheap_handle_destroy(hq), GRHEAP_OK);
+}
+
 TEST_F(VerifyTest, VerifyOffRecordsNothingAndFindsNothing) {
   HeapWorld w(verified(GRHEAP_VERIFY_OFF));
   Node * a = new_node(w.heap, 1);

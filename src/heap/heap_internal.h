@@ -127,7 +127,8 @@ typedef enum {
   GRHEAP_TRACE_VERIFY,   ///< Barrier-verify: compare the slot with its shadow.
   GRHEAP_TRACE_IMAGE,    ///< An image take: turn the slot into an index.
   GRHEAP_TRACE_SHADOW,   ///< After a restore: record the slot as stored.
-  GRHEAP_TRACE_RETAIN    ///< A retention query: record the reference found.
+  GRHEAP_TRACE_RETAIN,   ///< A retention query: record the reference found.
+  GRHEAP_TRACE_FORGET    ///< A dead object: drop the shadow of every slot it reports.
 } GRHEAP_TraceMode;
 
 struct GRHEAP_Take; /* image.c */

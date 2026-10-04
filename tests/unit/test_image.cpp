@@ -121,6 +121,23 @@ GRHEAP_Result flaky_snapshot(GRCORE_Context *, void *, GRHEAP_ImageWriter * w) {
 const GRHEAP_Type kFlaky = {"flaky", sizeof(Named), named_trace, named_destroy,
     nullptr, flaky_snapshot, flaky_restore};
 
+/* A type whose restore reads past what its snapshot wrote. */
+GRHEAP_Result g_reader_seen[3];
+GRHEAP_Result reader_snapshot(GRCORE_Context *, void *, GRHEAP_ImageWriter * w) {
+  return grheap_image_writer_write(w, "ab", 2); // no terminator
+}
+GRHEAP_Result reader_restore(
+    GRCORE_Context *, void *, GRHEAP_ImageReader * r, void *) {
+  const char * text = nullptr;
+  g_reader_seen[0] = grheap_image_reader_string(r, &text, nullptr);
+  char buf[8];
+  g_reader_seen[1] = grheap_image_reader_read(r, buf, sizeof buf);
+  g_reader_seen[2] = grheap_image_reader_read(r, buf, 1);
+  return g_reader_seen[0];
+}
+const GRHEAP_Type kReader = {"reader", sizeof(Named), named_trace, nullptr,
+    nullptr, reader_snapshot, reader_restore};
+
 /* A type that reports a slot outside its payload. */
 uint64_t g_outside = 0;
 void outside_trace(GRHEAP_Tracer * t, void *) {
@@ -756,6 +773,27 @@ TEST_F(ImageTest, ARestoreHookThatFailsPartWayRemovesEveryObjectTheRestoreMade) 
   EXPECT_EQ(dst.w.stats().ids_live, 0u);
   EXPECT_EQ(g_named_destroyed, 6u) << "each object destroyed once, none twice";
   EXPECT_EQ(dst.box.words[0], 0u);
+}
+
+TEST_F(ImageTest, AReaderThatRunsPastTheBlobOrFindsNoTerminatorIsCorruptAndTheHeapStaysEmpty) {
+  ImgWorld src(1);
+  void * p = nullptr;
+  ASSERT_EQ(grheap_alloc(src.w.heap, &kReader, &p), GRHEAP_OK);
+  src.set(0, p);
+  Taken t;
+  ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+  ImgWorld dst(1);
+  GRHEAP_RestoreEnv env = {[](void *, const char * name) -> const GRHEAP_Type * {
+                             return std::strcmp(name, "reader") == 0 ? &kReader
+                                                                     : nullptr;
+                           },
+      nullptr};
+  g_reader_seen[0] = g_reader_seen[1] = g_reader_seen[2] = GRHEAP_OK;
+  EXPECT_NE(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
+  EXPECT_EQ(g_reader_seen[0], GRHEAP_ERR_CORRUPT); // no terminator
+  EXPECT_EQ(g_reader_seen[1], GRHEAP_ERR_CORRUPT); // past the end, and stays failed
+  EXPECT_EQ(g_reader_seen[2], GRHEAP_ERR_CORRUPT);
+  EXPECT_EQ(dst.w.stats().live_objects, 0u);
 }
 
 TEST_F(ImageTest, AHookThatRefusesToSnapshotRefusesTheImageAndChangesNothing) {

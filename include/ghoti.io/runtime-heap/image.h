@@ -56,7 +56,10 @@
  * a later ID cannot collide), and writes the root slots by enumerating the
  * context's root sources again, which must report the same number of slots as
  * at the take. It is refused into a heap that already holds objects or IDs.
- * Any failure leaves the heap exactly as it was.
+ * Any failure leaves a collected heap exactly as it was. An arena heap cannot
+ * give single objects back, so after a failed restore it keeps the cells (and
+ * their accounting) the restore had made; they are unreachable, and a retry
+ * needs a fresh heap or ::grheap_arena_reset.
  *
  * The collector is unchanged: torture and barrier-verify run over a restored
  * heap as over any other (every restored reference slot is recorded as stored
@@ -149,8 +152,8 @@ GRHEAP_API GRHEAP_Result grheap_image_take(GRHEAP_Heap * heap,
  *   name `env->resolve` does not know, a resolved type that has a `weak` spec or
  *   is given extra bytes it has no `restore` for, or a `restore` hook that
  *   refuses; ::GRHEAP_ERR_LIMIT when the context's memory budget refused;
- *   ::GRHEAP_ERR_OOM for any other allocation failure. On any failure the heap
- *   is as it was.
+ *   ::GRHEAP_ERR_OOM for any other allocation failure. On any failure a
+ *   collected heap is as it was (an arena heap keeps the unreachable cells).
  */
 GRHEAP_API GRHEAP_Result grheap_image_instantiate(GRHEAP_Heap * heap,
     const GRHEAP_Image * image, const GRHEAP_RestoreEnv * env);

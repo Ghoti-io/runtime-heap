@@ -47,6 +47,16 @@ TEST(Umbrella, ReachesEveryHeaderOfTheAPI) {
   EXPECT_EQ(grheap_options_set_torture(nullptr, true), GRHEAP_ERR_INVALID);
 }
 
+TEST(Umbrella, ReachesTheRetentionQuery) {
+  // retention.h through the umbrella alone, from C++.
+  EXPECT_FALSE(grheap_retention_retained(nullptr));
+  EXPECT_EQ(grheap_retention_step_count(nullptr), 0u);
+  GRHEAP_Retention * path = nullptr;
+  EXPECT_EQ(grheap_retention_path(nullptr, nullptr, nullptr, &path),
+      GRHEAP_ERR_INVALID);
+  EXPECT_STREQ(grheap_retention_root_kind_string(GRHEAP_ROOT_HANDLE), "handle");
+}
+
 TEST(Umbrella, ReachesHeapImages) {
   // image.h through the umbrella alone.
   EXPECT_EQ(grheap_image_refcount(nullptr), 0u);

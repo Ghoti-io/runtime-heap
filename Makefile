@@ -220,6 +220,15 @@ INCLUDE += $(RTCORE_CFLAGS)
 SOURCES := $(shell find src -type f -name '*.c')
 LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
+# Code that only a test calls. It is in the static archive the tests link and
+# not in the shared library that ships, where it would be dead code carrying
+# a name nothing may call. check-symbols fails if one of them reaches the .so.
+TEST_ONLY_SOURCES := src/heap/digest.c
+TEST_ONLY_SYMBOLS := grheap_state_digest
+empty :=
+space := $(empty) $(empty)
+SHIPPED_OBJECTS := $(filter-out $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(TEST_ONLY_SOURCES)),$(LIBOBJECTS))
+
 TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cflags gtest`
 
 # coverage clears this: --coverage links the gcov runtime, whose mangle_path
@@ -294,7 +303,7 @@ $(OBJ_DIR)/%.o: src/%.c $(FLAGS_STAMP) | $(LIBVER_GEN)
 	@mkdir -p $(@D)
 	$(CC) $(LIB_CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@
 
-$(APP_DIR)/$(TARGET): $(LIBOBJECTS)
+$(APP_DIR)/$(TARGET): $(SHIPPED_OBJECTS)
 	@mkdir -p $(@D)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(LDFLAGS) $(RTCORE_LIBS) $(CUTIL_LIBS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)
 ifeq ($(OS_NAME), Linux)
@@ -493,6 +502,12 @@ ifeq ($(OS_NAME), Linux)
 	if [ -n "$$missing" ]; then \
 		printf '### Declared GRHEAP_API functions the shared library does not export ###\n%s\n' "$$missing" >&2; \
 		printf '(a definition whose translation unit never saw its declaration is hidden by -fvisibility=hidden, and the tests link the archive, so they cannot see it)\n' >&2; \
+		exit 1; \
+	fi
+	@testonly=$$(nm $(APP_DIR)/$(TARGET) | awk '{print $$NF}' \
+		| grep -E '(^|_)($(subst $(space),|,$(TEST_ONLY_SYMBOLS)))$$' || true); \
+	if [ -n "$$testonly" ]; then \
+		printf '### Test-only code in the shipped library ###\n%s\n' "$$testonly" >&2; \
 		exit 1; \
 	fi
 	@split=$$(nm -D --undefined-only $(APP_DIR)/$(TARGET) \

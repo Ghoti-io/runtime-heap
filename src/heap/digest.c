@@ -29,8 +29,10 @@
  * what the next collection does. The digest reads every span's allocation,
  * mark and pin bits, its free list, bump index and counts, the mark stack's
  * bookkeeping, the counters, the thresholds and the ID tables' sizes, and folds
- * them into one 64-bit FNV-1a value. It is `GRHEAP_INTERNAL_API`, so it is
- * visible to the tests that link the archive and hidden in the shipped library.
+ * them into one 64-bit FNV-1a value. It is `GRHEAP_INTERNAL_API` and it is
+ * test-only: the Makefile (TEST_ONLY_SOURCES) leaves this file out of the
+ * shared library that ships, and links it into the archive the tests use.
+ * check-symbols fails if the name reaches the shared library.
  */
 
 #include <ghoti.io/runtime-heap/macros.h>

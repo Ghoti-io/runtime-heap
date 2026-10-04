@@ -375,7 +375,8 @@ GRHEAP_INTERNAL_API void grheap_roots_clear_for_reset(GRHEAP_Heap * heap);
 /* ---- digest.c --------------------------------------------------------- */
 
 /** A 64-bit digest of the heap's bookkeeping (bits, lists, counters), for
- *  tests that a read-only operation changed none of it. */
+ *  tests that a read-only operation changed none of it. Test-only: it is not
+ *  in the shipped library (see TEST_ONLY_SOURCES in the Makefile). */
 GRHEAP_INTERNAL_API uint64_t grheap_state_digest(const GRHEAP_Heap * heap);
 
 /* ---- retention.c ------------------------------------------------------ */

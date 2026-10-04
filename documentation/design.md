@@ -711,7 +711,7 @@ that the scan finds one.
 ## The retention query
 
 `retention.h` answers CAP-13: *why is this object still alive?* `grheap_retention_path`
-returns the **shortest chain of references** from a root to one live object,
+returns the **shortest chain of ordinary references** (a root, then slots a `trace` reports) from a root to one live object,
 breadth-first, and it is one chain on purpose: the developer's question is "what
 is holding this", and one chain answers it. The set of everything retained is a
 heap-dump tool with another design.
@@ -728,7 +728,7 @@ key are both reached, or the key is an immediate. That hop is marked in the
 result, naming the ephemeron, so an object kept alive only that way is still
 explained. The hops are found in rounds after the plain walk, as the collector's
 fixpoint does, so a chain through an ephemeron is the one the fixpoint would
-use, and is shortest among the chains that fixpoint order allows.
+use. An ephemeron route is considered only after every ordinary route has been exhausted: a longer ordinary chain wins over a shorter one that needs a hop, and "shortest" says nothing about hops. In a hop step the offset is the ephemeron's value slot, not the key's.
 
 **The answer.** A root (kind, the root source's name, the slot's ordinal in
 *that* source's enumeration, a conservative word's byte offset in its range) and
@@ -755,13 +755,13 @@ any phase of a poll is accepted; it reads and changes nothing, so no phase can
 be harmed by it. A context that is running between polls is refused.
 
 **What it leaves alone.** No mark bit, pin, ID, statistic, free list or the mark
-stack. A `src/heap/digest.c` function folds the heap's bookkeeping into a 64-bit
+stack. A `src/heap/digest.c` function folds the heap's bookkeeping (the statistics, every span's allocation, mark and pin bits, free lists and counts, the mark stack's fields, the root and weak registries' and ID tables' sizes) into a 64-bit
 value for the tests, which compare it before and after every query, after every
 refusal and after every injected allocation failure.
 
 **Scratch.** One array of nodes, which is also the queue (a node is expanded in
 the order it was discovered, so the first discovery is the shortest), and an
-open-addressing table over it, both from the context's counting allocator and
+open-addressing table over it, both from the context's counting allocator (the result alone is made with the caller's) and
 grown by doubling, released on every path. A failure to grow ends the query as
 `OOM`, or `LIMIT` if the memory budget refused, with everything freed. The
 visited set is keyed by address. That is legal for the reason the ID index is

@@ -26,7 +26,10 @@
  *
  * Given a live object, ::grheap_retention_path finds the *shortest chain of
  * references* that keeps it: breadth-first from every root the collector would
- * use, to the object. The answer is a root description followed by one step per
+ * use, to the object. "Shortest" is among *ordinary* references (a root, then
+ * slots a `trace` reports): an ephemeron route is considered only when no
+ * ordinary route exists, so a longer ordinary chain wins over a shorter one that
+ * needs an ephemeron hop. The answer is a root description followed by one step per
  * object on the chain, the last step being the object asked about.
  *
  * It uses what the collector uses and nothing else: the registered root slots,
@@ -55,7 +58,7 @@
  * and marks nothing: no mark bit, pin, ID or statistic changes. It allocates
  * nothing *in the GC heap*; its scratch (a visited set and a queue) comes from
  * the context's counting allocator like any host allocation and is released
- * before it returns, and at every allocation failure it ends as an error,
+ * before it returns (the *result* is made with the caller's allocator, below), and at every allocation failure it ends as an error,
  * leaks nothing and leaves the heap unchanged.
  *
  * **No identity in the result.** AD-12 keys nothing by address, so the result
@@ -123,16 +126,23 @@ typedef struct GRHEAP_RetentionRoot {
                          ///< range. Zero otherwise.
 } GRHEAP_RetentionRoot;
 
+/** @brief A step's `slot_offset` when the referencing slot is not inside the
+ *  holder's payload. */
+#define GRHEAP_RETENTION_NOT_INLINE ((size_t)-1)
+
 /** @brief One object on a path. */
 typedef struct GRHEAP_RetentionStep {
   void * object;               ///< The object's payload. Valid only until the
                                ///< heap next collects or the context runs.
   const GRHEAP_Type * type;    ///< Its type.
   size_t slot_offset;          ///< Not the last step: the byte offset, in this
-                               ///< object's payload (or in `ephemeron`'s, for
-                               ///< an ephemeron hop), of the slot that
-                               ///< references the next step. The last step:
-                               ///< zero.
+                               ///< object's payload, of the slot that
+                               ///< references the next step; for an ephemeron
+                               ///< hop it is the offset in the *ephemeron's*
+                               ///< payload (`ephemeron`), not in this object's.
+                               ///< ::GRHEAP_RETENTION_NOT_INLINE when the slot
+                               ///< a `trace` reported is not inside the payload
+                               ///< (out-of-line storage). The last step: zero.
   void * ephemeron;            ///< NULL for a plain reference. Otherwise the
                                ///< reference to the next step is an ephemeron
                                ///< hop: this object is the ephemeron's key
@@ -149,7 +159,8 @@ typedef struct GRHEAP_RetentionStep {
  *
  * @param heap The heap.
  * @param object A live payload start.
- * @param allocator The allocator for the result; NULL for the default.
+ * @param allocator The allocator for the *result* only (the scratch is the
+ *   context's); NULL for the default.
  * @param out_path Receives the result, released with
  *   ::grheap_retention_release. Written only on success.
  * @return ::GRHEAP_OK (the object may still be not retained: ask

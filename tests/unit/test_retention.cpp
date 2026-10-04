@@ -776,6 +776,51 @@ TEST(Retention, ANonOwnerThreadIsRefused) {
   ASSERT_EQ(grheap_root_remove(w.heap, &root), GRHEAP_OK);
 }
 
+namespace {
+GRCORE_Context * g_ctx_for_remove = nullptr;
+const GRCORE_RootSource kVictim = {"victim", held_enumerate};
+HeldRoots g_victim_roots;
+void remover_enumerate(GRCORE_Context *, void *, const GRCORE_RootVisitor *) {
+  // Breaks roots.h's rule (a source must not remove one) on purpose, so the
+  // table is shorter than the count the query read.
+  grcore_context_remove_root_source(g_ctx_for_remove, &kVictim, &g_victim_roots);
+}
+const GRCORE_RootSource kRemover = {"remover", remover_enumerate};
+
+uint64_t g_outside_slot = 0;
+void outside_trace(GRHEAP_Tracer * t, void *) { grheap_trace_word(t, &g_outside_slot); }
+const GRHEAP_Type kOutside = {"outside", 16, outside_trace, nullptr, nullptr, nullptr, nullptr};
+} // namespace
+
+TEST(Retention, ARootSourceThatCannotBeReadFailsTheQueryInsteadOfTruncatingTheRoots) {
+  HeapWorld w(steady());
+  Node * unreached = mk(w.heap, 1);
+  g_ctx_for_remove = w.ctx;
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kRemover, nullptr), GRCORE_OK);
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kVictim, &g_victim_roots), GRCORE_OK);
+  std::vector<uint64_t> before = fingerprint(w.heap);
+  GRHEAP_Retention * out = nullptr;
+  EXPECT_EQ(grheap_retention_path(w.heap, unreached, nullptr, &out), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(out, nullptr);
+  EXPECT_EQ(fingerprint(w.heap), before);
+}
+
+TEST(Retention, ASlotOutsideThePayloadHasTheNotInlineOffset) {
+  HeapWorld w(steady());
+  void * po = nullptr;
+  ASSERT_EQ(grheap_alloc(w.heap, &kOutside, &po), GRHEAP_OK);
+  Node * target = mk(w.heap, 5);
+  g_outside_slot = addr(target);
+  void * root = po;
+  ASSERT_EQ(grheap_root_add(w.heap, &root), GRHEAP_OK);
+  Path path;
+  ASSERT_EQ(path.ask(w.heap, target), GRHEAP_OK);
+  ASSERT_EQ(path.count(), 2u);
+  EXPECT_EQ(path.step(0).slot_offset, GRHEAP_RETENTION_NOT_INLINE);
+  g_outside_slot = 0;
+  ASSERT_EQ(grheap_root_remove(w.heap, &root), GRHEAP_OK);
+}
+
 TEST(Retention, AccessorsRefuseNullAndOutOfRange) {
   EXPECT_FALSE(grheap_retention_retained(nullptr));
   EXPECT_EQ(grheap_retention_step_count(nullptr), 0u);

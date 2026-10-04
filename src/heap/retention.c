@@ -87,6 +87,7 @@ struct GRHEAP_Retain {
   size_t * table;        ///< Node index plus one; zero is empty.
   size_t table_capacity; ///< A power of two.
   bool failed;
+  bool invalid;          ///< `failed` because the query itself cannot be answered.
   uint64_t refusals_before;
   bool found;
   size_t found_index;
@@ -308,6 +309,11 @@ static void enumerate_roots(Retain * r) {
     void * value;
     if (grcore_context_root_source(heap->context, i, &source, &value) !=
         GRCORE_OK) {
+      /* A truncated root set would answer "not retained" for an object a later
+       * source holds: fail the query instead. (Reached only if a source
+       * removed another during the enumeration, which roots.h forbids.) */
+      r->failed = true;
+      r->invalid = true;
       break;
     }
     r->root_source = source->name;
@@ -339,10 +345,14 @@ void grheap_retention_trace(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
       !grheap_locate(r->heap, (uintptr_t)address, true, &span, &index)) {
     return;
   }
-  discover(r, grheap_payload(span, index), r->holder,
-      (size_t)((const unsigned char *)slot -
-          (const unsigned char *)tracer->payload),
-      NULL);
+  /* A slot outside the payload (out-of-line storage, which AD-11 permits) has
+   * no offset in it: SIZE_MAX says "not inline". */
+  const unsigned char * at = slot;
+  const unsigned char * base = tracer->payload;
+  size_t offset = at >= base && (size_t)(at - base) < grheap_header(tracer->payload)->size
+      ? (size_t)(at - base)
+      : SIZE_MAX;
+  discover(r, grheap_payload(span, index), r->holder, offset, NULL);
 }
 
 static void expand(Retain * r, size_t index) {
@@ -507,7 +517,8 @@ GRHEAP_Result grheap_retention_path(GRHEAP_Heap * heap, const void * object,
   GRHEAP_Retention * out = NULL;
   GRHEAP_Result result = GRHEAP_OK;
   if (r.failed) {
-    result = grheap_failure(heap, r.refusals_before);
+    result = r.invalid ? GRHEAP_ERR_INVALID
+                       : grheap_failure(heap, r.refusals_before);
   } else {
     out = make_result(&r, allocator);
     if (out == NULL) {
@@ -593,7 +604,7 @@ void grheap_retention_dump(const GRHEAP_Retention * path, FILE * out) {
       fprintf(out, "  step %zu: object type \"%s\" (the target)\n", i, name);
     } else if (s->ephemeron != NULL) {
       fprintf(out,
-          "  step %zu: object type \"%s\", ephemeron hop, value slot offset %zu\n",
+          "  step %zu: object type \"%s\", ephemeron hop (offset %zu is in the ephemeron's payload)\n",
           i, name, s->slot_offset);
     } else {
       fprintf(out, "  step %zu: object type \"%s\", slot offset %zu\n", i, name,

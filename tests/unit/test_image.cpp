@@ -118,7 +118,15 @@ GRHEAP_Result flaky_restore(
 GRHEAP_Result flaky_snapshot(GRCORE_Context *, void *, GRHEAP_ImageWriter * w) {
   return grheap_image_writer_string(w, "x");
 }
-const GRHEAP_Type kFlaky = {"flaky", sizeof(Named), named_trace, named_destroy,
+/* What a destroy hook finds in a payload during a failed restore: the pointers
+ * `snapshot` cleared, which are cleared until a `restore` stores a resolved
+ * one (type.h). It must be able to take that, not only a restored payload. */
+std::vector<const char *> g_flaky_seen;
+void flaky_destroy(void * payload) {
+  g_flaky_seen.push_back(static_cast<Named *>(payload)->label);
+  g_named_destroyed++;
+}
+const GRHEAP_Type kFlaky = {"flaky", sizeof(Named), named_trace, flaky_destroy,
     nullptr, flaky_snapshot, flaky_restore};
 
 /* A type whose restore reads past what its snapshot wrote. */
@@ -768,10 +776,18 @@ TEST_F(ImageTest, ARestoreHookThatFailsPartWayRemovesEveryObjectTheRestoreMade) 
   ImgWorld dst(1);
   GRHEAP_RestoreEnv env = env_with();
   g_named_destroyed = 0;
+  g_flaky_seen.clear();
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
   EXPECT_EQ(dst.w.stats().live_objects, 0u);
   EXPECT_EQ(dst.w.stats().ids_live, 0u);
   EXPECT_EQ(g_named_destroyed, 6u) << "each object destroyed once, none twice";
+  // Objects whose restore ran, objects whose restore never did (the failure
+  // was at the fourth) and the one that failed are all destroyed holding what
+  // the snapshot left: a cleared host pointer, never one from the image.
+  ASSERT_EQ(g_flaky_seen.size(), 6u);
+  for (const char * label : g_flaky_seen) {
+    EXPECT_EQ(label, nullptr);
+  }
   EXPECT_EQ(dst.box.words[0], 0u);
 }
 

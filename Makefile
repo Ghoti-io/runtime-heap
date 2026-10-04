@@ -94,9 +94,11 @@ else ifeq ($(UNAME_S), Darwin)
 	PC_LIB_DIR := $(LIB_INSTALL_PATH)/$(SUITE)
 	override BUILD := mac/$(BUILD)
 
-# TODO(windows): the Windows branches in this file were adapted from font's
-# and have never been run, nor has GRHEAP_API's dllexport/dllimport switching.
-# See notes/suite/WINDOWS-TODO.md.
+# The MINGW64 branch below has been cross-built and run under wine, with a
+# uname and cygpath that imitate MSYS2 (tools/xwin/m1-run.sh in the workspace);
+# that includes GRHEAP_API's dllexport/dllimport switching, which the probe
+# consumes. It has not run on a Windows machine, and the MINGW32 branch has not
+# run at all. See notes/suite/WINDOWS-TODO.md.
 else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)
 	OS_NAME := Windows
 	LIB_EXTENSION := dll

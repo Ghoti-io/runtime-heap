@@ -132,7 +132,7 @@ TEST(Heap, CreateMovesAllocationFailureIntoItsResultAndLeavesNoHeap) {
 
 TEST(Alloc, ReturnsAZeroFilledSixteenByteAlignedPayloadOfTheTypesSize) {
   HeapWorld w;
-  const GRHEAP_Type big = {"big", 100, nullptr, nullptr, nullptr, nullptr, nullptr};
+  static const GRHEAP_Type big = {"big", 100, nullptr, nullptr, nullptr, nullptr, nullptr};
   void * p = nullptr;
   ASSERT_EQ(grheap_alloc(w.heap, &big, &p), GRHEAP_OK);
   ASSERT_NE(p, nullptr);

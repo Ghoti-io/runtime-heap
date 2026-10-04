@@ -155,6 +155,31 @@ TEST_F(ArenaTest, HandlesPinsAndRootsAreAcceptedAndKeepNothingAlive) {
   ASSERT_EQ(grheap_handle_destroy(h), GRHEAP_OK);
 }
 
+TEST_F(ArenaTest, PinsAreCountedPerObjectAndCappedAsInTheOtherMode) {
+  HeapWorld w(arena());
+  Node * a = new_node(w.heap, 1);
+  Node * b = new_node(w.heap, 2);
+  ASSERT_EQ(grheap_pin(w.heap, a), GRHEAP_OK);
+  // The count belongs to the object: B was never pinned, so unpinning it is
+  // refused though the heap holds a pin, and A's pin is still there.
+  EXPECT_EQ(grheap_unpin(w.heap, b), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(w.stats().pins, 1u);
+  ASSERT_EQ(grheap_unpin(w.heap, a), GRHEAP_OK);
+  EXPECT_EQ(grheap_unpin(w.heap, a), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(w.stats().pins, 0u);
+  // The cap is the same GRHEAP_PIN_MAX, and a refused pin changes nothing.
+  for (unsigned i = 0; i < GRHEAP_PIN_MAX; i++) {
+    ASSERT_EQ(grheap_pin(w.heap, b), GRHEAP_OK) << i;
+  }
+  EXPECT_EQ(grheap_pin(w.heap, b), GRHEAP_ERR_LIMIT);
+  EXPECT_EQ(w.stats().pins, static_cast<uint64_t>(GRHEAP_PIN_MAX));
+  for (unsigned i = 0; i < GRHEAP_PIN_MAX; i++) {
+    ASSERT_EQ(grheap_unpin(w.heap, b), GRHEAP_OK) << i;
+  }
+  EXPECT_EQ(grheap_unpin(w.heap, b), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(w.stats().pins, 0u);
+}
+
 TEST_F(ArenaTest, ResetIsRefusedOutsideArenaModeAndForANonOwner) {
   HeapWorld collected;
   EXPECT_EQ(grheap_arena_reset(collected.heap), GRHEAP_ERR_INVALID);

@@ -108,7 +108,7 @@ typedef struct GRHEAP_Span {
   void * free_list;  ///< BLOCK: first free cell, threaded through the cells.
   uint64_t * alloc;  ///< One bit per cell (BLOCK) or granule (ARENA).
   uint64_t * mark;   ///< BLOCK: one bit per cell. NULL for an ARENA.
-  uint8_t * pins;    ///< BLOCK: a pin count per cell, made on the first pin.
+  uint8_t * pins;    ///< A pin count per cell (BLOCK) or granule (ARENA), made on the first pin.
   struct GRHEAP_Span * next_avail; ///< The class's list of blocks with room.
   uint64_t bits[];   ///< Storage for `alloc` and `mark`.
 } GRHEAP_Span;

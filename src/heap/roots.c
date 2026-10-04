@@ -164,10 +164,10 @@ GRHEAP_Result grheap_pin(GRHEAP_Heap * heap, void * object) {
       !grheap_locate(heap, (uintptr_t)object, true, &span, &index)) {
     return GRHEAP_ERR_INVALID;
   }
-  if (span->kind == GRHEAP_SPAN_ARENA) {
-    heap->stats.pins++;
-    return GRHEAP_OK;
-  }
+  /* An arena span keeps its counts the way a block does, one byte per
+   * granule: the arena never collects, so a pin keeps nothing alive, but the
+   * count is the caller's bookkeeping and has to mean the same in both modes
+   * (per object, capped, an unpin of an unpinned object refused). */
   if (span->pins == NULL) {
     uint64_t refusals = grcore_context_memory_refusals(heap->context);
     span->pins = heap->allocator->calloc_fn(
@@ -192,13 +192,6 @@ GRHEAP_Result grheap_unpin(GRHEAP_Heap * heap, void * object) {
   if (!ready(heap) || object == NULL ||
       !grheap_locate(heap, (uintptr_t)object, true, &span, &index)) {
     return GRHEAP_ERR_INVALID;
-  }
-  if (span->kind == GRHEAP_SPAN_ARENA) {
-    if (heap->stats.pins == 0) {
-      return GRHEAP_ERR_INVALID;
-    }
-    heap->stats.pins--;
-    return GRHEAP_OK;
   }
   if (span->pins == NULL || span->pins[index] == 0) {
     return GRHEAP_ERR_INVALID;

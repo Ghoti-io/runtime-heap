@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -35,6 +36,77 @@ class CollectTest : public ::testing::Test {
  protected:
   void SetUp() override { destroyed_log().clear(); }
 };
+
+namespace {
+
+/* A destroy hook that asks the heap about every object that was allocated,
+ * which type.h forbids it to rely on but which must not read freed memory. */
+struct HookProbe {
+  GRHEAP_Heap * heap = nullptr;
+  std::vector<void *> all;
+  size_t asked = 0;
+  size_t self_missing = 0;
+  size_t wrong_type = 0;
+  bool inside = false;
+};
+HookProbe g_probe;
+
+void probing_destroy(void * payload) {
+  HookProbe & p = g_probe;
+  bool found_self = false;
+  for (void * q : p.all) {
+    p.asked++;
+    bool in = grheap_contains(p.heap, q);
+    const GRHEAP_Type * t = grheap_type_of(p.heap, q);
+    size_t size = 0;
+    GRHEAP_Result r = grheap_size_of(p.heap, q, &size);
+    if (in != (t != nullptr) || in != (r == GRHEAP_OK)) {
+      p.wrong_type++;
+    }
+    if (q == payload) {
+      found_self = in;
+    }
+  }
+  if (!found_self) {
+    p.self_missing++;
+  }
+}
+
+const GRHEAP_Type kProbed = {"probed", sizeof(Node), node_trace, probing_destroy, nullptr, nullptr, nullptr};
+const GRHEAP_Type kBigProbed = {"big-probed", 300000, nullptr, probing_destroy, nullptr, nullptr, nullptr};
+
+} // namespace
+
+TEST_F(CollectTest, ADestroyHookMayAskTheHeapAboutEveryObjectDuringTheSweep) {
+  // Several spans, large ones among them, all dead at once, so the sweep frees
+  // spans while hooks of later ones are still to run. A hook that asks "is
+  // this a live object" walks the span array, which must hold only spans that
+  // still exist (ASan is the instrument that sees a stale entry).
+  WorldConfig config;
+  config.auto_collect = false; // no collection but the one asked for
+  HeapWorld w(steady(config));
+  g_probe = HookProbe();
+  g_probe.heap = w.heap;
+  for (int i = 0; i < 12; i++) {
+    void * p = nullptr;
+    ASSERT_EQ(grheap_alloc(w.heap, &kBigProbed, &p), GRHEAP_OK);
+    g_probe.all.push_back(p);
+  }
+  for (int i = 0; i < 400; i++) {
+    void * p = nullptr;
+    ASSERT_EQ(grheap_alloc(w.heap, &kProbed, &p), GRHEAP_OK);
+    g_probe.all.push_back(p);
+  }
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(g_probe.asked, g_probe.all.size() * g_probe.all.size());
+  EXPECT_EQ(g_probe.self_missing, 0u) << "a dying object is still an object while its own hook runs";
+  EXPECT_EQ(g_probe.wrong_type, 0u) << "contains, type_of and size_of disagreed";
+  EXPECT_EQ(w.stats().live_objects, 0u);
+  for (void * p : g_probe.all) {
+    EXPECT_FALSE(grheap_contains(w.heap, p));
+  }
+  EXPECT_EQ(w.pages.live, 0) << "every emptied span was returned";
+}
 
 TEST_F(CollectTest, CyclicGarbageIsFreedAndEachHookRunsOnce) {
   HeapWorld w(steady());

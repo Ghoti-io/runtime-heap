@@ -96,9 +96,17 @@ void grheap_sweep(GRHEAP_Heap * heap) {
   size_t kept = 0;
 
   heap->busy++;
+  /* First every dead cell, hooks included, with the span array exactly as it
+   * was. A hook may ask the heap a question (contains, type_of, size_of), and
+   * the array must hold only spans that still exist: compacting it and
+   * freeing emptied spans in the same loop left the hook of a later span
+   * searching entries that pointed at freed spans. */
+  for (size_t i = 0; i < heap->nspans; i++) {
+    freed += sweep_block(heap, heap->spans[i]);
+  }
+  /* Then the spans: clear the marks, return what emptied, relink what is left. */
   for (size_t i = 0; i < heap->nspans; i++) {
     GRHEAP_Span * s = heap->spans[i];
-    freed += sweep_block(heap, s);
     memset(s->mark, 0, grheap_bit_words(s->ncells) * sizeof(uint64_t));
     if (s->live == 0) {
       grheap_span_free(heap, s);

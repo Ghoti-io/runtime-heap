@@ -254,7 +254,10 @@ An arena bump allocates from chunks the size of a block and never frees one
 object. `grheap_arena_reset` runs every `destroy` hook and gives every chunk
 back, keeping the heap; destroying the context does the same and then frees the
 heap. Handles, pins and roots are accepted and keep nothing alive, so code
-written against one mode runs in the other; a reset clears every handle to NULL
+written against one mode runs in the other; pins are counted per object and capped
+at `GRHEAP_PIN_MAX` as in the collected mode (an arena span keeps one byte per
+16-byte granule, made at its first pin), so an unpin of an object that was not
+pinned is refused whichever mode it is; a reset clears every handle to NULL
 and drops the pins, and leaves registered root slots registered (they are the
 caller's memory, and an arena does not scan them). Heap modes without barriers,
 an arena and a stop-the-world full mark, are context policy (AD-11).
@@ -384,8 +387,11 @@ happens and still returns OK, so that COUNT can finish a run and show the
 count. ABORT prints the type name and the slot to stderr and calls `abort()`.
 
 The shadow of a dead object is removed in the sweep before its `destroy` hook
-runs, so a cell that comes back as another type, with its traced slots
-elsewhere, is not blamed for the old occupant. If the table cannot grow, the
+runs: the range of its own cell, and then the slot of every pointer its `trace`
+reports (walked in a forget mode that reads nothing), which includes slots that
+are not in the cell, so a cell that comes back as another type, with its traced
+slots elsewhere, or a buffer reused after its owner died, is not blamed for the
+old occupant. If the table cannot grow, the
 heap stops trusting it (`grheap_verify` says `ERR_OOM`) instead of reading an
 absent entry as a bypass. Verify changes no result the heap computes, though its
 tables are charged to the context's memory budget; a test runs one program with
@@ -528,6 +534,17 @@ verify? -> mark roots -> ephemeron fixpoint -> clear weak/ephemeron -> drop dead
 3. **Sweep**, then
 4. **`cleared(payload)`**, once per cell that had a slot cleared, with the heap
    busy: it can read the cell and nothing allocates.
+
+The fixpoint is driven by what marking reaches. An ephemeron's value is marked
+when its own cell is marked and its key holds, so it becomes ready at exactly two
+events: its key being marked, or its cell being marked. Two tables sorted by
+address (ephemerons by key, ephemerons by their own cell) are built for the
+fixpoint, the marker reports each cell it newly marks through a hook that only
+queues what has become ready, and each ephemeron is queued once. A chain registered
+against its links used to resolve one link per pass over the registry (4,096 links:
+255 ms for one collection, the `ephemeron-chain-4k` bench case; 1.6 ms now). The
+tables are working memory from the context's allocator; if they cannot be had the
+fixpoint scans the registry as it did, so a collection still never fails.
 
 Weak slots are judged only after the fixpoint, so a weak cell never sees a
 target that an ephemeron value was about to keep. A pinned or conservatively

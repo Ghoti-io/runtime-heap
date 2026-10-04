@@ -45,6 +45,7 @@
 #include <ghoti.io/runtime-heap/id.h>
 #include <ghoti.io/runtime-heap/image.h>
 #include <ghoti.io/runtime-heap/options.h>
+#include <ghoti.io/runtime-heap/retention.h>
 #include <ghoti.io/runtime-heap/roots.h>
 #include <ghoti.io/runtime-heap/store.h>
 #include <ghoti.io/runtime-heap/type.h>

@@ -126,11 +126,13 @@ typedef enum {
   GRHEAP_TRACE_MARK = 0, ///< Marking: decode the slot and mark its target.
   GRHEAP_TRACE_VERIFY,   ///< Barrier-verify: compare the slot with its shadow.
   GRHEAP_TRACE_IMAGE,    ///< An image take: turn the slot into an index.
-  GRHEAP_TRACE_SHADOW    ///< After a restore: record the slot as stored.
+  GRHEAP_TRACE_SHADOW,   ///< After a restore: record the slot as stored.
+  GRHEAP_TRACE_RETAIN    ///< A retention query: record the reference found.
 } GRHEAP_TraceMode;
 
 struct GRHEAP_Take; /* image.c */
 struct GRHEAP_Pending; /* image.c */
+struct GRHEAP_Retain; /* retention.c */
 
 /** What a `trace` function is handed. */
 struct GRHEAP_Tracer {
@@ -142,6 +144,8 @@ struct GRHEAP_Tracer {
   struct GRHEAP_Take * take; ///< IMAGE: the take in progress.
   unsigned char * base;     ///< IMAGE: the copy of the payload being walked.
   size_t size;              ///< IMAGE: its size.
+  struct GRHEAP_Retain * retain; ///< RETAIN: the query in progress. `payload`
+                            ///< is the holder being expanded.
 };
 
 /** One shadow slot: where, and the last value stored through a grheap_store. */
@@ -367,6 +371,19 @@ GRHEAP_INTERNAL_API void grheap_roots_free(GRHEAP_Heap * heap);
 
 /** Clears every handle's object. */
 GRHEAP_INTERNAL_API void grheap_roots_clear_for_reset(GRHEAP_Heap * heap);
+
+/* ---- digest.c --------------------------------------------------------- */
+
+/** A 64-bit digest of the heap's bookkeeping (bits, lists, counters), for
+ *  tests that a read-only operation changed none of it. */
+GRHEAP_INTERNAL_API uint64_t grheap_state_digest(const GRHEAP_Heap * heap);
+
+/* ---- retention.c ------------------------------------------------------ */
+
+/** A RETAIN-mode tracer reports a slot (encoded: a codec word; else a raw
+ *  pointer). Changes no heap state. */
+GRHEAP_INTERNAL_API void grheap_retention_trace(
+    GRHEAP_Tracer * tracer, void * slot, bool encoded);
 
 /* ---- verify.c --------------------------------------------------------- */
 

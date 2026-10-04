@@ -6,7 +6,8 @@ with `gc_store`, registered roots, handles, pins and an arena mode, taken from
 the runtime stack's architecture spine (AD-2, AD-3, AD-11, AD-12, AD-13, AD-14,
 AD-16 to AD-21, AD-26), with weak cells, ephemerons, stable IDs and an identity
 hash, the two verification instruments (GC torture and barrier-verify), the
-barrier contract, CI, and heap images (the heap's half of context snapshots).
+barrier contract, CI, heap images (the heap's half of context snapshots) and the
+retention query.
 What is still not here is listed at the end.
 
 ## What this library is
@@ -304,7 +305,8 @@ and (torture off, which is the baseline a tortured run is read against) the
 clearing of 1,000 weak cells and a stable-ID lookup, and an image of that
 10,000-node graph taken, and instantiated into a world made for it (the
 destination context is part of the figure: a heap must be empty to take an
-image). No numeric budget is asserted; AD-26 records budgets once a first
+image), and one retention query over a 100,000-object heap for an object nothing
+reaches (a full walk). No numeric budget is asserted; AD-26 records budgets once a first
 measurement exists. `make test` runs it once, with a tiny workload, to prove it builds,
 links and runs.
 
@@ -705,6 +707,87 @@ that the scan finds one.
 - *Running `trace` again at restore to find the slots.* It depends on the
   payload that the take cleared, and `trace` is free to branch on a slot that is
   now an index; the recorded offsets do not.
+
+## The retention query
+
+`retention.h` answers CAP-13: *why is this object still alive?* `grheap_retention_path`
+returns the **shortest chain of references** from a root to one live object,
+breadth-first, and it is one chain on purpose: the developer's question is "what
+is holding this", and one chain answers it. The set of everything retained is a
+heap-dump tool with another design.
+
+**It is the collector's walk with the marking taken out.** Roots come in the
+collector's order (registered root slots, handles, pinned objects, then each
+context root source), each object's references come from its type's `trace`
+through a fourth tracer mode, `GRHEAP_TRACE_RETAIN`, beside MARK, VERIFY and the
+image's modes, and a type that is right for the collector is right for the
+query. MARK's behaviour is not touched: torture and verify run unchanged. A weak
+slot is never an edge (the type's `trace` does not report it). An ephemeron's
+value is reached the way `weak.c` reaches it: once the ephemeron itself and its
+key are both reached, or the key is an immediate. That hop is marked in the
+result, naming the ephemeron, so an object kept alive only that way is still
+explained. The hops are found in rounds after the plain walk, as the collector's
+fixpoint does, so a chain through an ephemeron is the one the fixpoint would
+use, and is shortest among the chains that fixpoint order allows.
+
+**The answer.** A root (kind, the root source's name, the slot's ordinal in
+*that* source's enumeration, a conservative word's byte offset in its range) and
+one step per object on the chain: its type, and the byte offset in its payload of
+the slot that references the next. The target is always the last step. Ties are
+broken by the collector's root order, then the type's slot order, so the answer
+is deterministic. An object no root reaches (unswept garbage) is a successful
+answer, `retained` false: never an empty path presented as success, and never an
+error. To name sources, the query needs to call them one at a time, which
+`grcore_context_enumerate_roots` cannot do; `runtime-core` gained
+`grcore_context_root_source` for it.
+
+**No identity in the result (AD-12).** Nothing is keyed by address *outside* the
+heap, and the result stores none as an identity: its addresses are valid only
+until the heap next collects or the context next runs, and a host that wants a
+durable name asks `grheap_id_of` for the steps it cares about. The result is
+made with the allocator the caller gives, so it does not depend on the context.
+
+**When.** The owning thread, with the context parked, paused or at a poll, and
+the heap not busy. The query marks the heap busy while it walks, so a `trace` that
+tries to allocate (or to ask the query again) is refused exactly as in a
+collection. The heap cannot see which phase a handler runs in, so a query from
+any phase of a poll is accepted; it reads and changes nothing, so no phase can
+be harmed by it. A context that is running between polls is refused.
+
+**What it leaves alone.** No mark bit, pin, ID, statistic, free list or the mark
+stack. A `src/heap/digest.c` function folds the heap's bookkeeping into a 64-bit
+value for the tests, which compare it before and after every query, after every
+refusal and after every injected allocation failure.
+
+**Scratch.** One array of nodes, which is also the queue (a node is expanded in
+the order it was discovered, so the first discovery is the shortest), and an
+open-addressing table over it, both from the context's counting allocator and
+grown by doubling, released on every path. A failure to grow ends the query as
+`OOM`, or `LIMIT` if the memory budget refused, with everything freed. The
+visited set is keyed by address. That is legal for the reason the ID index is
+(it lives in `gc`, AD-12) and for a second one: no GC point can occur during the
+query, since nothing allocates in the GC heap and the heap is busy, so an
+address names one object from the first discovery to the last read. **A moving
+collector would have to change this**: key the set by something a move keeps
+(a forwarding table, or a transient ID) and translate the result's addresses
+through the same table.
+
+**Cost.** About 100 ns per reachable object (`retention-100k`: a full walk of a
+100,000-object heap, for an object nothing reaches, takes about 11 ms), against
+about 20 ns per object for a mark and sweep; the difference is the hash table
+and the node records.
+
+*Rejected:*
+
+- *A back-pointer in every header.* It costs every object a word for a question
+  asked rarely.
+- *A second marking pass that records parents in the mark bits.* It touches
+  MARK, which the collector's correctness and the instruments depend on, and a
+  query would then have to restore the bits.
+- *An id-keyed result.* It would issue stable IDs as a side effect of asking, and
+  AD-12 keys nothing by address *or* by an identity the heap did not give out.
+- *Depth-first search.* It is cheaper in scratch and finds a chain, but not the
+  shortest, and a long chain through a cache is the less useful explanation.
 
 ## CI
 

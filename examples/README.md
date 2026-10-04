@@ -20,6 +20,8 @@ needs an engine.
 | Describe a weak cell and learn when its target died (`GRHEAP_WeakSpec`, `cleared`) | [`weak_and_ids.c`](weak_and_ids.c), `cache_type`, "A weak cell" |
 | Keep a value alive only as long as its key is (an ephemeron) | [`weak_and_ids.c`](weak_and_ids.c), `main`, "An ephemeron" |
 | Name an object without its address (`grheap_id_of`, `grheap_object_of_id`, `grheap_identity_hash`) | [`weak_and_ids.c`](weak_and_ids.c), `main`, "Stable IDs" |
+| Ask why an object is still alive: the shortest chain from a root, each holder's type and slot offset (`grheap_retention_path`) | [`retention_path.c`](retention_path.c), `main` |
+| Tell "not retained" (an answer) from an error | [`retention_path.c`](retention_path.c), `main`, "Fix the leak" |
 | Run under the instruments (`GRHEAP_TORTURE=1`, `GRHEAP_VERIFY=1`) | [`weak_and_ids.c`](weak_and_ids.c) runs unchanged under both; `make test-torture` runs the unit tests that way |
 
 The graph is two nodes that point at each other. A reference-counting scheme

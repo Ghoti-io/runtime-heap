@@ -444,6 +444,59 @@ static uint64_t image_restore_run(uint64_t iterations) {
   return sink;
 }
 
+/* One retention query over a 100,000-object graph that is all live, for an
+ * object nothing reaches: the search walks every object and finds nothing, which
+ * is the most a query can cost on a heap this size. An iteration is one query,
+ * scratch and result included. */
+#define RETENTION_NODES 100000u
+
+static uint64_t retention_run(uint64_t iterations) {
+  World w;
+  world_open(&w);
+  void * head = NULL;
+  void * first = NULL;
+  if (grheap_root_add(w.heap, &head) != GRHEAP_OK) {
+    setup_failed("root add");
+  }
+  uint64_t seed = 88172645463325252ull;
+  static void * nodes[RETENTION_NODES];
+  for (uint32_t i = 0; i < RETENTION_NODES; i++) {
+    void * p;
+    if (grheap_alloc(w.heap, &node_type, &p) != GRHEAP_OK) {
+      setup_failed("alloc node");
+    }
+    Node * n = p;
+    n->id = i;
+    n->next = head;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+    n->other = i == 0 ? NULL : nodes[seed % i];
+    nodes[i] = p;
+    if (i == 0) {
+      first = p;
+    }
+    head = p; /* nothing allocates between here and the next link */
+  }
+  (void)first;
+  void * lost;
+  if (grheap_alloc(w.heap, &leaf_type, &lost) != GRHEAP_OK) {
+    setup_failed("alloc lost");
+  }
+  uint64_t sink = 0;
+  for (uint64_t i = 0; i < iterations; i++) {
+    GRHEAP_Retention * path;
+    if (grheap_retention_path(w.heap, lost, NULL, &path) != GRHEAP_OK ||
+        grheap_retention_retained(path)) {
+      setup_failed("retention query");
+    }
+    sink += RETENTION_NODES;
+    grheap_retention_release(path);
+  }
+  world_close(&w);
+  return sink;
+}
+
 static const Case cases[] = {
     {"calibration", calibration_run, 200u * 1000u * 1000u, 1000u * 1000u},
     {"alloc-small", alloc_small_run, 20u * 1000u * 1000u, 100000u},
@@ -454,6 +507,7 @@ static const Case cases[] = {
     {"id-lookup", id_lookup_run, 50u * 1000u * 1000u, 100000u},
     {"image-take-10k", image_take_run, 2000u, 3u},
     {"image-restore-10k", image_restore_run, 1000u, 3u},
+    {"retention-100k", retention_run, 100u, 2u},
 };
 
 #define REPEATS 7

@@ -17,12 +17,17 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -1068,6 +1073,31 @@ TEST(Retention, ItWorksOverAHeapRestoredFromAnImage) {
 
 /* ---- The result ------------------------------------------------------------------------------ */
 
+/* The dump goes to a FILE *. open_memstream is POSIX and Windows has none, so
+ * the text goes through a temporary file, read back and removed. */
+static std::string capture_dump(const GRHEAP_Retention * path) {
+  std::string name = (std::filesystem::temp_directory_path() /
+      ("grheap-retention-dump-" +
+          std::to_string(std::chrono::steady_clock::now()
+                             .time_since_epoch()
+                             .count()) +
+          ".txt"))
+                         .string();
+  FILE * f = fopen(name.c_str(), "wb");
+  EXPECT_NE(f, nullptr);
+  if (f == nullptr) {
+    return std::string();
+  }
+  grheap_retention_dump(path, f);
+  fclose(f);
+  std::ifstream in(name, std::ios::binary);
+  std::string text((std::istreambuf_iterator<char>(in)),
+      std::istreambuf_iterator<char>());
+  in.close();
+  std::remove(name.c_str());
+  return text;
+}
+
 TEST(Retention, TheDumpNamesTheRootAndEveryStepWithoutAnyAddress) {
   HeapWorld w(steady());
   Chain c = build_chain(w);
@@ -1077,14 +1107,7 @@ TEST(Retention, TheDumpNamesTheRootAndEveryStepWithoutAnyAddress) {
   ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kHeldSource, &held), GRCORE_OK);
   Path path;
   ASSERT_EQ(path.ask(w.heap, c.leaked), GRHEAP_OK);
-  char * text = nullptr;
-  size_t size = 0;
-  FILE * f = open_memstream(&text, &size);
-  ASSERT_NE(f, nullptr);
-  grheap_retention_dump(path.p, f);
-  fclose(f);
-  std::string s(text);
-  free(text);
+  std::string s = capture_dump(path.p);
   EXPECT_NE(s.find("root: context root source \"held\", #0"), std::string::npos) << s;
   EXPECT_NE(s.find("step 0: object type \"plain\", slot offset 0"), std::string::npos) << s;
   EXPECT_NE(s.find("step 1: object type \"plain\", slot offset 8"), std::string::npos) << s;

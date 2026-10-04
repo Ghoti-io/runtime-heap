@@ -35,6 +35,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 DIR="${1:-$ROOT/tests/gates/dynamic}"
 
+# On Windows the compiler appends .exe to whatever -o names, so the program it
+# wrote is not the path that was asked for; name the suffix once and use it
+# wherever a built program is written or run.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) EXE=.exe ;;
+  *) EXE= ;;
+esac
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT INT TERM
 
@@ -81,7 +89,7 @@ fi
 build() {
   name="$1"; which="$2"; define="${3:-}"
   src="$DIR/$name.c"
-  out="$work/$name-$which"
+  out="$work/$name-$which$EXE"
   # shellcheck disable=SC2086
   if ! $CC ${CFLAGS:-} ${INCLUDE:-} $define -o "$out" "$src" $LIBS \
       >"$work/$name-$which.log" 2>&1; then
@@ -96,7 +104,7 @@ $(cat "$work/$name-$which.log")"
 # Sets $rc and $out. The instrument variables are set or removed explicitly, so
 # that a make test-torture run exporting them cannot change what this proves.
 run() {
-  bin="$1"; torture="$2"; verify="$3"
+  bin="$1$EXE"; torture="$2"; verify="$3"
   # shellcheck disable=SC2086
   out="$( (env -u GRHEAP_TORTURE -u GRHEAP_VERIFY \
       ${torture:+GRHEAP_TORTURE=$torture} ${verify:+GRHEAP_VERIFY=$verify} \

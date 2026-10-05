@@ -78,8 +78,8 @@ static void thing_destroy(void * payload) {
   destroyed++;
 }
 
-static const GRHEAP_Type thing_type = {
-    "thing", sizeof(Thing), NULL, thing_destroy, NULL, NULL, NULL};
+static const GRHEAP_Type thing_type = GRHEAP_TYPE_INIT(
+    "thing", sizeof(Thing), NULL, thing_destroy, NULL, NULL, NULL);
 
 /* ---- A weak cell ------------------------------------------------------- */
 
@@ -96,8 +96,8 @@ static void ref_cleared(void * payload) {
 
 static const GRHEAP_WeakSpec ref_weak = {
     GRHEAP_WEAK_CELL, offsetof(Ref, target), 0, 0, false, ref_cleared};
-static const GRHEAP_Type ref_type = {
-    "weak-ref", sizeof(Ref), NULL, NULL, &ref_weak, NULL, NULL};
+static const GRHEAP_Type ref_type = GRHEAP_TYPE_INIT(
+    "weak-ref", sizeof(Ref), NULL, NULL, &ref_weak, NULL, NULL);
 
 /* ---- An ephemeron ------------------------------------------------------ */
 
@@ -114,8 +114,8 @@ static void property_cleared(void * payload) {
 static const GRHEAP_WeakSpec property_weak = {GRHEAP_EPHEMERON, 0,
     offsetof(Property, key), offsetof(Property, value), false,
     property_cleared};
-static const GRHEAP_Type property_type = {
-    "property", sizeof(Property), NULL, NULL, &property_weak, NULL, NULL};
+static const GRHEAP_Type property_type = GRHEAP_TYPE_INIT(
+    "property", sizeof(Property), NULL, NULL, &property_weak, NULL, NULL);
 
 /* Allocates and holds with a handle, which is how an object survives the next
  * allocation (a GC point) without being stored anywhere yet. */

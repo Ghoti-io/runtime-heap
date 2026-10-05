@@ -25,7 +25,7 @@
 #define MAGIC UINT64_C(0x1122334455667788)
 #define POISON UINT64_C(0xDDDDDDDDDDDDDDDD)
 
-static const GRHEAP_Type blob_type = {"blob", 64, NULL, NULL, NULL, NULL, NULL};
+static const GRHEAP_Type blob_type = GRHEAP_TYPE_INIT("blob", 64, NULL, NULL, NULL, NULL, NULL);
 
 #ifndef PLANT_MISSING_ROOT
 /* A registered root slot: the way a C variable keeps an object. */

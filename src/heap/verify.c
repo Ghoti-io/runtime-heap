@@ -320,7 +320,7 @@ static void walk_object(void * user, void * payload) {
   if (type->trace != NULL) {
     type->trace(&tracer, payload);
   }
-  if (type->weak != NULL) {
+  if (grheap_type_weak(type) != NULL) {
     grheap_weak_each_slot(type, payload, weak_slot, &tracer);
   }
   w->found += tracer.found;

@@ -28,7 +28,8 @@ static void node_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &((Node *)payload)->peer);
 }
 
-static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL};
+static const GRHEAP_Type node_type =
+    GRHEAP_TYPE_INIT("node", sizeof(Node), node_trace, NULL, NULL, NULL, NULL);
 
 int main(void) {
   GRCORE_Group * group;
@@ -93,9 +94,9 @@ them all and includes nothing from `runtime-core`'s A.
 | Header | Holds |
 | --- | --- |
 | `options.h` | `GRHEAP_Options`: opaque, set through setters. The mode (collected or arena), the value codec, the allocation threshold, whether allocation may collect, and the two instruments (`set_torture`, `set_verify`) |
-| `image.h` | `GRHEAP_Image`: an immutable, reference-counted, address-free image of the objects a context's roots reach (`grheap_image_take`, `grheap_image_instantiate`), with the writer and reader a type's hooks use; the heap's key carries one inside a context snapshot |
+| `image.h` | `GRHEAP_Image`: an immutable, reference-counted, address-free image of the objects a context's roots reach (`grheap_image_take`, `grheap_image_instantiate`), with the writer and reader a type's hooks use, and `GRHEAP_RestoreEnv` (a leading `size`, defined with `GRHEAP_RESTORE_ENV_INIT(resolve, user)`); the heap's key carries one inside a context snapshot |
 | `retention.h` | `grheap_retention_path`: why is this object alive? The shortest chain of references from a root (context source, C root, handle, pin or conservative range) to a live object, each holder's type and slot offset, ephemeron hops marked; "not retained" is an answer, not an error; the result carries no identity |
-| `type.h` | `GRHEAP_Type` (name, default size, `trace`, `destroy`, an optional `GRHEAP_WeakSpec` for a weak cell or ephemeron, and optional `snapshot` and `restore` hooks for a payload that holds a host pointer) and the two functions a `trace` calls: `grheap_trace_slot` for a raw pointer, `grheap_trace_word` for an encoded value |
+| `type.h` | `GRHEAP_Type` (a leading `struct_size`, written by `GRHEAP_TYPE_INIT(name, size, trace, destroy, weak, snapshot, restore)`; name, default size, `trace`, `destroy`, an optional `GRHEAP_WeakSpec` for a weak cell or ephemeron, and optional `snapshot` and `restore` hooks for a payload that holds a host pointer) and the two functions a `trace` calls: `grheap_trace_slot` for a raw pointer, `grheap_trace_word` for an encoded value |
 | `heap.h` | `GRHEAP_Heap`: `grheap_heap_create` (attaches to a context), `grheap_alloc`, `grheap_alloc_sized`, `grheap_collect`, `grheap_arena_reset`, `grheap_contains`, `grheap_type_of`, `grheap_size_of`, `grheap_stats` |
 | `store.h` | `grheap_store`, `grheap_store_range`, `grheap_store_word`: the only sanctioned pointer stores into heap objects; and `grheap_verify`, which compares every traced slot with what the stores wrote |
 | `id.h` | `grheap_id_of`, `grheap_object_of_id`, `grheap_identity_hash`: stable IDs (monotonic from 1, never reused, held weakly) and a hash that is a function of the ID |

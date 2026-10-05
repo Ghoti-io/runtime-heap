@@ -35,8 +35,8 @@ void wnode_cleared(void *) { g_cleared++; }
 
 const GRHEAP_WeakSpec kWNodeSpec = {GRHEAP_WEAK_CELL, offsetof(WNode, target), 0,
     0, false, wnode_cleared};
-const GRHEAP_Type kWNode = {"wnode", sizeof(WNode), node_trace, node_destroy,
-    &kWNodeSpec, nullptr, nullptr};
+const GRHEAP_Type kWNode = GRHEAP_TYPE_INIT("wnode", sizeof(WNode), node_trace, node_destroy,
+    &kWNodeSpec, nullptr, nullptr);
 
 struct Rng {
   uint64_t s;

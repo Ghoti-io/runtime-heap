@@ -110,13 +110,23 @@ void * grheap_take_cell(GRHEAP_Heap * heap, size_t cell) {
   return take_small(heap, cell);
 }
 
+bool grheap_type_valid(const GRHEAP_Type * type) {
+  /* The first member is read to learn how much of the rest exists, so a type
+   * is judged by that alone: a size below the first-generation layout would
+   * have the heap read members that are not there, and one that is not a
+   * multiple of the alignment cannot be the sizeof of any struct. A size above
+   * this header's is a type from a newer header, which is accepted. */
+  return type != NULL && type->struct_size >= GRHEAP_TYPE_MIN_SIZE &&
+      type->struct_size % _Alignof(GRHEAP_Type) == 0;
+}
+
 static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
     size_t bytes, void ** out_object) {
-  if (!grheap_usable(heap) || type == NULL || out_object == NULL ||
+  if (!grheap_usable(heap) || !grheap_type_valid(type) || out_object == NULL ||
       heap->busy != 0) {
     return GRHEAP_ERR_INVALID;
   }
-  if (type->weak != NULL && !grheap_weak_spec_fits(type, bytes)) {
+  if (grheap_type_weak(type) != NULL && !grheap_weak_spec_fits(type, bytes)) {
     return GRHEAP_ERR_INVALID; /* a weak slot outside the payload */
   }
   size_t cell;
@@ -125,7 +135,7 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   }
   uint64_t refusals = grcore_context_memory_refusals(heap->context);
   void * cellp;
-  bool weak = type->weak != NULL && heap->mode == GRHEAP_MODE_COLLECTED;
+  bool weak = grheap_type_weak(type) != NULL && heap->mode == GRHEAP_MODE_COLLECTED;
   if (weak && !grheap_weak_reserve(heap)) {
     /* The registry grows before the cell is taken, so a failure here has
      * taken nothing. */
@@ -189,7 +199,7 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
 
 GRHEAP_Result grheap_alloc(
     GRHEAP_Heap * heap, const GRHEAP_Type * type, void ** out_object) {
-  if (type == NULL) {
+  if (!grheap_type_valid(type)) {
     return GRHEAP_ERR_INVALID;
   }
   return alloc_object(heap, type, type->size, out_object);

@@ -34,8 +34,8 @@ static void pair_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &pair->second);
 }
 
-static const GRHEAP_Type pair_type = {
-    "pair", sizeof(Pair), pair_trace, NULL, NULL, NULL, NULL};
+static const GRHEAP_Type pair_type = GRHEAP_TYPE_INIT(
+    "pair", sizeof(Pair), pair_trace, NULL, NULL, NULL, NULL);
 
 #define CHECK(condition)                                                       \
   do {                                                                         \

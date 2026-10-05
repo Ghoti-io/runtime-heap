@@ -173,11 +173,12 @@ GRHEAP_API GRHEAP_Heap * grheap_heap_get(const GRCORE_Context * context);
  * stores it, roots it, wraps it in a handle or pins it.
  *
  * @param heap The heap.
- * @param type The type, by address. Must outlive the object.
+ * @param type The type, by address. Must be valid (::grheap_type_valid) and
+ *   outlive the object.
  * @param out_object Receives the payload. Borrowed. Written only on success.
- * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL argument, a non-owner,
- *   or an allocation during a collection or from inside a `trace` or
- *   `destroy` function; ::GRHEAP_ERR_LIMIT when the context's memory budget
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL argument, an invalid
+ *   type (`struct_size`), a non-owner, or an allocation during a collection
+ *   or from inside a `trace` or `destroy` function; ::GRHEAP_ERR_LIMIT when the context's memory budget
  *   refused the memory (the context's refusal count rose during the attempt);
  *   ::GRHEAP_ERR_OOM otherwise. A failed allocation changes nothing the
  *   caller can see, apart from a collection that may have run.

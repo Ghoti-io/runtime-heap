@@ -41,7 +41,7 @@ void box_enumerate(
     }
   }
 }
-const GRCORE_RootSource kBoxSource = {"box", box_enumerate};
+const GRCORE_RootSource kBoxSource = GRCORE_ROOT_SOURCE_INIT("box", box_enumerate);
 
 /* A source with a conservative range, for the refusal. */
 struct RangeBox {
@@ -57,7 +57,7 @@ void range_enumerate(
     visitor->range(visitor->user, &range);
   }
 }
-const GRCORE_RootSource kRangeSource = {"range", range_enumerate};
+const GRCORE_RootSource kRangeSource = GRCORE_ROOT_SOURCE_INIT("range", range_enumerate);
 
 /* ---- types with host pointers --------------------------------------------- */
 
@@ -104,11 +104,11 @@ GRHEAP_Result named_restore(
 }
 uint64_t g_named_destroyed = 0;
 void named_destroy(void *) { g_named_destroyed++; }
-const GRHEAP_Type kNamed = {"named", sizeof(Named), named_trace, named_destroy,
-    nullptr, named_snapshot, named_restore};
+const GRHEAP_Type kNamed = GRHEAP_TYPE_INIT("named", sizeof(Named), named_trace, named_destroy,
+    nullptr, named_snapshot, named_restore);
 /* The same layout with no hooks: the type that forgot, a control. */
-const GRHEAP_Type kNamedForgot = {"named-forgot", sizeof(Named), named_trace,
-    nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kNamedForgot = GRHEAP_TYPE_INIT("named-forgot", sizeof(Named), named_trace,
+    nullptr, nullptr, nullptr, nullptr);
 
 /* A type whose restore refuses payloads with n == 3. */
 GRHEAP_Result flaky_restore(
@@ -126,8 +126,8 @@ void flaky_destroy(void * payload) {
   g_flaky_seen.push_back(static_cast<Named *>(payload)->label);
   g_named_destroyed++;
 }
-const GRHEAP_Type kFlaky = {"flaky", sizeof(Named), named_trace, flaky_destroy,
-    nullptr, flaky_snapshot, flaky_restore};
+const GRHEAP_Type kFlaky = GRHEAP_TYPE_INIT("flaky", sizeof(Named), named_trace, flaky_destroy,
+    nullptr, flaky_snapshot, flaky_restore);
 
 /* A type whose restore reads past what its snapshot wrote. */
 GRHEAP_Result g_reader_seen[3];
@@ -143,16 +143,16 @@ GRHEAP_Result reader_restore(
   g_reader_seen[2] = grheap_image_reader_read(r, buf, 1);
   return g_reader_seen[0];
 }
-const GRHEAP_Type kReader = {"reader", sizeof(Named), named_trace, nullptr,
-    nullptr, reader_snapshot, reader_restore};
+const GRHEAP_Type kReader = GRHEAP_TYPE_INIT("reader", sizeof(Named), named_trace, nullptr,
+    nullptr, reader_snapshot, reader_restore);
 
 /* A type that reports a slot outside its payload. */
 uint64_t g_outside = 0;
 void outside_trace(GRHEAP_Tracer * t, void *) {
   grheap_trace_word(t, &g_outside);
 }
-const GRHEAP_Type kOutside = {"outside", 16, outside_trace, nullptr, nullptr,
-    nullptr, nullptr};
+const GRHEAP_Type kOutside = GRHEAP_TYPE_INIT("outside", 16, outside_trace, nullptr, nullptr,
+    nullptr, nullptr);
 
 /* A weak cell. */
 struct WCell {
@@ -160,13 +160,13 @@ struct WCell {
 };
 const GRHEAP_WeakSpec kWCellSpec = {
     GRHEAP_WEAK_CELL, offsetof(WCell, target), 0, 0, false, nullptr};
-const GRHEAP_Type kWCell = {"wcell", sizeof(WCell), nullptr, nullptr, &kWCellSpec,
-    nullptr, nullptr};
+const GRHEAP_Type kWCell = GRHEAP_TYPE_INIT("wcell", sizeof(WCell), nullptr, nullptr, &kWCellSpec,
+    nullptr, nullptr);
 
 /* Two types with one name. */
-const GRHEAP_Type kTwinOne = {"twin", 16, nullptr, nullptr, nullptr, nullptr, nullptr};
-const GRHEAP_Type kTwinTwo = {"twin", 24, nullptr, nullptr, nullptr, nullptr, nullptr};
-const GRHEAP_Type kNameless = {nullptr, 16, nullptr, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kTwinOne = GRHEAP_TYPE_INIT("twin", 16, nullptr, nullptr, nullptr, nullptr, nullptr);
+const GRHEAP_Type kTwinTwo = GRHEAP_TYPE_INIT("twin", 24, nullptr, nullptr, nullptr, nullptr, nullptr);
+const GRHEAP_Type kNameless = GRHEAP_TYPE_INIT(nullptr, 16, nullptr, nullptr, nullptr, nullptr, nullptr);
 
 const GRHEAP_Type * const kKnown[] = {&kNode, &kPlainNode, &kLeaf, &kNamed,
     &kNamedForgot, &kFlaky, &kWCell, &kOutside};
@@ -201,7 +201,7 @@ struct Taken {
 };
 
 GRHEAP_RestoreEnv env_with(void * user = nullptr) {
-  GRHEAP_RestoreEnv e;
+  GRHEAP_RestoreEnv e = GRHEAP_RESTORE_ENV_INIT(nullptr, nullptr);
   e.resolve = resolve_known;
   e.user = user;
   return e;
@@ -799,11 +799,11 @@ TEST_F(ImageTest, AReaderThatRunsPastTheBlobOrFindsNoTerminatorIsCorruptAndTheHe
   Taken t;
   ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
   ImgWorld dst(1);
-  GRHEAP_RestoreEnv env = {[](void *, const char * name) -> const GRHEAP_Type * {
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT([](void *, const char * name) -> const GRHEAP_Type * {
                              return std::strcmp(name, "reader") == 0 ? &kReader
                                                                      : nullptr;
                            },
-      nullptr};
+      nullptr);
   g_reader_seen[0] = g_reader_seen[1] = g_reader_seen[2] = GRHEAP_OK;
   EXPECT_NE(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
   EXPECT_EQ(g_reader_seen[0], GRHEAP_ERR_CORRUPT); // no terminator
@@ -813,12 +813,12 @@ TEST_F(ImageTest, AReaderThatRunsPastTheBlobOrFindsNoTerminatorIsCorruptAndTheHe
 }
 
 TEST_F(ImageTest, AHookThatRefusesToSnapshotRefusesTheImageAndChangesNothing) {
-  static const GRHEAP_Type refuses = {"refuses", sizeof(Named), nullptr, nullptr,
+  static const GRHEAP_Type refuses = GRHEAP_TYPE_INIT("refuses", sizeof(Named), nullptr, nullptr,
       nullptr,
       [](GRCORE_Context *, void *, GRHEAP_ImageWriter *) -> GRHEAP_Result {
         return GRHEAP_ERR_INVALID;
       },
-      nullptr};
+      nullptr);
   ImgWorld src(1);
   void * p = nullptr;
   ASSERT_EQ(grheap_alloc(src.w.heap, &refuses, &p), GRHEAP_OK);
@@ -972,9 +972,9 @@ TEST_F(ImageTest, ATypeTheDestinationDoesNotKnowAndABadArgumentRefuseTheRestore)
   Taken t;
   ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
   ImgWorld dst(1);
-  GRHEAP_RestoreEnv none = {resolve_nothing, nullptr};
+  GRHEAP_RestoreEnv none = GRHEAP_RESTORE_ENV_INIT(resolve_nothing, nullptr);
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &none), GRHEAP_ERR_INVALID);
-  GRHEAP_RestoreEnv unset = {nullptr, nullptr};
+  GRHEAP_RestoreEnv unset = GRHEAP_RESTORE_ENV_INIT(nullptr, nullptr);
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &unset), GRHEAP_ERR_INVALID);
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, nullptr), GRHEAP_ERR_INVALID);
   GRHEAP_RestoreEnv env = env_with();
@@ -991,12 +991,12 @@ TEST_F(ImageTest, ADestinationTypeWithAWeakSpecIsRefused) {
   Taken t;
   ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
   ImgWorld dst(1);
-  static const GRHEAP_Type weak_plain = {"plain", sizeof(WCell), nullptr, nullptr,
-      &kWCellSpec, nullptr, nullptr};
-  GRHEAP_RestoreEnv env = {[](void *, const char *) -> const GRHEAP_Type * {
+  static const GRHEAP_Type weak_plain = GRHEAP_TYPE_INIT("plain", sizeof(WCell), nullptr, nullptr,
+      &kWCellSpec, nullptr, nullptr);
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT([](void *, const char *) -> const GRHEAP_Type * {
                              return &weak_plain;
                            },
-      nullptr};
+      nullptr);
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
   EXPECT_EQ(dst.w.stats().live_objects, 0u);
 }
@@ -1056,12 +1056,12 @@ TEST_F(ImageTest, AnImageNeedsTheTypesRestoreHookWhenItCarriedExtraBytes) {
   ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
   ImgWorld dst(1);
   // A destination whose "named" has no restore hook cannot take the extra bytes.
-  static const GRHEAP_Type deaf = {"named", sizeof(Named), named_trace, nullptr,
-      nullptr, nullptr, nullptr};
-  GRHEAP_RestoreEnv env = {[](void *, const char *) -> const GRHEAP_Type * {
+  static const GRHEAP_Type deaf = GRHEAP_TYPE_INIT("named", sizeof(Named), named_trace, nullptr,
+      nullptr, nullptr, nullptr);
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT([](void *, const char *) -> const GRHEAP_Type * {
                              return &deaf;
                            },
-      nullptr};
+      nullptr);
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
   EXPECT_EQ(dst.w.stats().live_objects, 0u);
 }
@@ -1222,7 +1222,7 @@ TEST_F(ImageTest, TheHeapKeyCarriesTheImageInsideAContextSnapshot) {
   EXPECT_STREQ(grcore_snapshot_blob_name(snap, 0), GRHEAP_SNAPSHOT_KEY_NAME);
 
   GRHEAP_RestoreEnv env = env_with();
-  GRCORE_RestoreEnv renv = {};
+  GRCORE_RestoreEnv renv = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
   renv.user = &env;
   renv.lookup = [](void * u, const char * name) -> void * {
     return std::strcmp(name, GRHEAP_SNAPSHOT_KEY_NAME) == 0 ? u : nullptr;

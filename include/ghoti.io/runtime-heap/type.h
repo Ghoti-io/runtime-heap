@@ -201,27 +201,95 @@ typedef struct GRHEAP_WeakSpec {
 } GRHEAP_WeakSpec;
 
 /**
- * @brief A type descriptor. Define it `static` (or `const`) and allocate by
- *   address; it must outlive every object allocated with it.
+ * @brief A type descriptor. Define it `static` (or `const`) with
+ *   ::GRHEAP_TYPE_INIT and allocate by address; it must outlive every object
+ *   allocated with it.
+ *
+ * **The struct grows at the end, and `struct_size` says how far.** The rule is
+ * runtime-core's `GRCORE_Key` (its header, `b/key.h`, has the argument and the
+ * rejected alternatives). A type is defined by the embedder as a static
+ * object, and it has grown twice (`weak`, then the two image hooks), each time
+ * forcing an edit of every definition and, after a release, leaving a type
+ * compiled before the member indistinguishable from one with garbage in it.
+ * So the first member, `struct_size`, is the `sizeof(GRHEAP_Type)` of the
+ * header the type was compiled against, ::GRHEAP_TYPE_INIT writes it, and a
+ * member after `destroy` (`weak`, `snapshot`, `restore`) is read only where
+ * `struct_size` covers it (::GRHEAP_TYPE_HAS), an absent one being NULL.
+ * (`size` is taken: it is the payload's size, which is why this one is longer
+ * than the others' `size`.) ::grheap_alloc and its relatives, and an image's
+ * type resolver, refuse with ::GRHEAP_ERR_INVALID a type that
+ * ::grheap_type_valid does not accept: a `struct_size` below
+ * ::GRHEAP_TYPE_MIN_SIZE (which includes zero) or off the struct's alignment.
+ * A larger `struct_size` is accepted and the members this library does not
+ * know are ignored, so each future member must be one whose absence is a
+ * defined degradation (a hook not run, no weak slot), never a requirement.
  */
 typedef struct GRHEAP_Type {
+  /**
+   * `sizeof(GRHEAP_Type)` as the type's definer compiled it. Set by
+   * ::GRHEAP_TYPE_INIT. Never write it by hand.
+   */
+  size_t struct_size;
   const char * name;      ///< For diagnostics. May be NULL.
   size_t size;            ///< Payload bytes ::grheap_alloc allocates.
   GRHEAP_TraceFn trace;   ///< Reports pointer slots. NULL: a leaf object.
   GRHEAP_DestroyFn destroy; ///< Releases external resources. May be NULL.
-  const GRHEAP_WeakSpec * weak; ///< A weak cell or ephemeron. May be NULL.
+  /** A weak cell or ephemeron. May be NULL; absent (and so NULL) in a type
+   *  whose `struct_size` ends before it. */
+  const GRHEAP_WeakSpec * weak;
   /**
    * Prepares a payload for a heap image (image.h). May be NULL: the payload is
    * then copied as it is, and the type promises it holds no host pointer. A
-   * type with a `weak` spec cannot be in an image at all.
-   *
-   * The two image hooks are last, so a static type written before them keeps
-   * working: C zero-fills the omitted initialisers.
+   * type with a `weak` spec cannot be in an image at all. Absent (and so NULL)
+   * in a type whose `struct_size` ends before it.
    */
   GRHEAP_SnapshotFn snapshot;
-  /** Rebuilds the host pointers `snapshot` named. May be NULL. */
+  /** Rebuilds the host pointers `snapshot` named. May be NULL; absent as
+   *  `snapshot` is. */
   GRHEAP_RestoreFn restore;
 } GRHEAP_Type;
+
+/**
+ * @brief The smallest `struct_size` a type may state: the layout through
+ *   `destroy`, which is the layout before `weak` existed.
+ */
+#define GRHEAP_TYPE_MIN_SIZE                                                \
+  (offsetof(GRHEAP_Type, destroy) + sizeof(((GRHEAP_Type *)0)->destroy))
+
+/**
+ * @brief The initialiser of a type:
+ *   `GRHEAP_TYPE_INIT(name, size, trace, destroy, weak, snapshot, restore)`.
+ *
+ * Expands to a braced initialiser that begins with `sizeof(GRHEAP_Type)`, a
+ * constant expression in C17 and C++20, and the members given are the ones
+ * after `struct_size`, positionally. Give every member, NULL where unused.
+ * @code
+ * static const GRHEAP_Type node_type = GRHEAP_TYPE_INIT("node", sizeof(Node),
+ *     node_trace, NULL, NULL, NULL, NULL);
+ * @endcode
+ */
+#define GRHEAP_TYPE_INIT(...) { sizeof(GRHEAP_Type), __VA_ARGS__ }
+
+/**
+ * @brief Whether a type's `struct_size` covers a member, so that reading it is
+ *   defined.
+ *
+ * @code
+ * GRHEAP_TYPE_HAS(type, weak) && type->weak != NULL
+ * @endcode
+ */
+#define GRHEAP_TYPE_HAS(type, member)                                       \
+  ((type)->struct_size >= offsetof(GRHEAP_Type, member) +                   \
+      sizeof((type)->member))
+
+/**
+ * @brief Whether a type is acceptable to allocate with (see ::GRHEAP_Type).
+ *
+ * @param type The type. NULL is not valid.
+ * @return true when `struct_size` is at least ::GRHEAP_TYPE_MIN_SIZE and a
+ *   multiple of the struct's alignment.
+ */
+GRHEAP_API bool grheap_type_valid(const GRHEAP_Type * type);
 
 /**
  * @brief Reports a slot that holds a raw pointer to the start of another

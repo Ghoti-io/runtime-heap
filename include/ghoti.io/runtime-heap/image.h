@@ -111,15 +111,58 @@ typedef const GRHEAP_Type * (*GRHEAP_TypeResolver)(
 
 /**
  * @brief What the host supplies to an instantiation: how to find the types by
- *   name, and the `user` its `restore` hooks and resolver are given.
+ *   name, and the `user` its `restore` hooks and resolver are given. Define it
+ *   with ::GRHEAP_RESTORE_ENV_INIT.
  *
  * This is also the environment the heap's key is given in a context restore
  * (see ::GRHEAP_SNAPSHOT_KEY_NAME).
+ *
+ * **The struct grows at the end, and `size` says how far.** The rule is
+ * runtime-core's `GRCORE_Key` (`b/key.h` has the argument and the rejected
+ * alternatives), applied to a struct the host fills in and the heap reads: the
+ * first member, `size`, is the `sizeof(GRHEAP_RestoreEnv)` of the header the
+ * host compiled against, ::GRHEAP_RESTORE_ENV_INIT writes it, and a member
+ * added after `user` is read only where `size` covers it, an absent one being
+ * NULL. No such member exists yet, so ::GRHEAP_RESTORE_ENV_MIN_SIZE is the
+ * whole struct. ::grheap_image_instantiate and the context restore refuse with
+ * ::GRHEAP_ERR_INVALID an environment that ::grheap_restore_env_valid does not
+ * accept; a larger `size` is accepted and the unknown tail ignored.
  */
 typedef struct GRHEAP_RestoreEnv {
+  /**
+   * `sizeof(GRHEAP_RestoreEnv)` as the host compiled it. Set by
+   * ::GRHEAP_RESTORE_ENV_INIT. Never write it by hand.
+   */
+  size_t size;
   GRHEAP_TypeResolver resolve; ///< Required.
   void * user;                 ///< Handed to `resolve` and to every `restore`.
 } GRHEAP_RestoreEnv;
+
+/** @brief The smallest `size` an environment may state: the layout through
+ *   `user`, which is every member there is. */
+#define GRHEAP_RESTORE_ENV_MIN_SIZE                                         \
+  (offsetof(GRHEAP_RestoreEnv, user) +                                      \
+      sizeof(((GRHEAP_RestoreEnv *)0)->user))
+
+/** @brief The initialiser of a restore environment:
+ *   `GRHEAP_RESTORE_ENV_INIT(resolve, user)`. Begins with
+ *   `sizeof(GRHEAP_RestoreEnv)`. */
+#define GRHEAP_RESTORE_ENV_INIT(...) { sizeof(GRHEAP_RestoreEnv), __VA_ARGS__ }
+
+/** @brief Whether an environment's `size` covers a member, so that reading it
+ *   is defined. */
+#define GRHEAP_RESTORE_ENV_HAS(env, member)                                 \
+  ((env)->size >= offsetof(GRHEAP_RestoreEnv, member) + sizeof((env)->member))
+
+/**
+ * @brief Whether a restore environment is acceptable (see
+ *   ::GRHEAP_RestoreEnv).
+ *
+ * @param env The environment. NULL is not valid.
+ * @return true when `size` is at least ::GRHEAP_RESTORE_ENV_MIN_SIZE and a
+ *   multiple of the struct's alignment.
+ */
+GRHEAP_API bool grheap_restore_env_valid(const GRHEAP_RestoreEnv * env);
 
 /**
  * @brief Takes an image of the objects reachable from the context's roots.
@@ -146,10 +189,12 @@ GRHEAP_API GRHEAP_Result grheap_image_take(GRHEAP_Heap * heap,
  *   sources report as many precise slots as they did at the take and no
  *   conservative range.
  * @param image The image.
- * @param env The resolver and `user`.
- * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL argument, a non-owner, a
+ * @param env The resolver and `user`; valid (::grheap_restore_env_valid).
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL argument, an invalid
+ *   environment (`size`), a non-owner, a
  *   heap that is not empty or busy, a codec or root layout that differs, a type
- *   name `env->resolve` does not know, a resolved type that has a `weak` spec or
+ *   name `env->resolve` does not know, a resolved type that is invalid
+ *   (::grheap_type_valid) or has a `weak` spec or
  *   is given extra bytes it has no `restore` for, or a `restore` hook that
  *   refuses; ::GRHEAP_ERR_LIMIT when the context's memory budget refused;
  *   ::GRHEAP_ERR_OOM for any other allocation failure. On any failure a

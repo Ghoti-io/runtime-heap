@@ -147,8 +147,8 @@ static void node_trace(GRHEAP_Tracer * tracer, void * payload) {
   grheap_trace_slot(tracer, &n->other);
 }
 
-static const GRHEAP_Type node_type = {"node", sizeof(Node), node_trace, NULL, NULL, NULL, NULL};
-static const GRHEAP_Type leaf_type = {"leaf", 16, NULL, NULL, NULL, NULL, NULL};
+static const GRHEAP_Type node_type = GRHEAP_TYPE_INIT("node", sizeof(Node), node_trace, NULL, NULL, NULL, NULL);
+static const GRHEAP_Type leaf_type = GRHEAP_TYPE_INIT("leaf", 16, NULL, NULL, NULL, NULL, NULL);
 
 /* A small object, unreachable as soon as it is made: the price of an
  * allocation including the collections it triggers, the way a program that
@@ -263,8 +263,8 @@ static void weak_cell_trace(GRHEAP_Tracer * tracer, void * payload) {
 
 static const GRHEAP_WeakSpec weak_spec = {
     GRHEAP_WEAK_CELL, offsetof(WeakCell, target), 0, 0, false, NULL};
-static const GRHEAP_Type weak_cell_type = {
-    "weak-cell", sizeof(WeakCell), weak_cell_trace, NULL, &weak_spec, NULL, NULL};
+static const GRHEAP_Type weak_cell_type = GRHEAP_TYPE_INIT(
+    "weak-cell", sizeof(WeakCell), weak_cell_trace, NULL, &weak_spec, NULL, NULL);
 
 /* One collection that clears 1,000 weak cells: the targets are made and
  * stored, nothing else holds them, and the collection finds them dead, nulls
@@ -360,7 +360,7 @@ static void image_roots_enumerate(
   visitor->slot(visitor->user, value);
 }
 
-static const GRCORE_RootSource image_roots = {"bench", image_roots_enumerate};
+static const GRCORE_RootSource image_roots = GRCORE_ROOT_SOURCE_INIT("bench", image_roots_enumerate);
 
 static const GRHEAP_Type * image_resolve(void * user, const char * name) {
   (void)user;
@@ -424,7 +424,7 @@ static uint64_t image_restore_run(uint64_t iterations) {
     setup_failed("image take");
   }
   uint64_t sink = 0;
-  GRHEAP_RestoreEnv env = {image_resolve, NULL};
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT(image_resolve, NULL);
   for (uint64_t i = 0; i < iterations; i++) {
     World w;
     uint64_t root = 0;
@@ -511,8 +511,8 @@ static void eph_node_trace(GRHEAP_Tracer * tracer, void * payload) {
 
 static const GRHEAP_WeakSpec eph_spec = {GRHEAP_EPHEMERON, 0,
     offsetof(EphNode, key), offsetof(EphNode, value), false, NULL};
-static const GRHEAP_Type eph_node_type = {
-    "eph-node", sizeof(EphNode), eph_node_trace, NULL, &eph_spec, NULL, NULL};
+static const GRHEAP_Type eph_node_type = GRHEAP_TYPE_INIT(
+    "eph-node", sizeof(EphNode), eph_node_trace, NULL, &eph_spec, NULL, NULL);
 
 /* One collection of a chain of 4,096 ephemerons, built so the registry lists
  * them in the opposite order to the chain: ephemeron i keeps object i+1 alive

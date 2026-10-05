@@ -98,7 +98,7 @@ static void clear_slot(GRHEAP_Heap * heap, unsigned char * payload, size_t offse
 }
 
 bool grheap_weak_spec_fits(const GRHEAP_Type * type, size_t bytes) {
-  const GRHEAP_WeakSpec * w = type->weak;
+  const GRHEAP_WeakSpec * w = grheap_type_weak(type);
   if (w == NULL) {
     return true;
   }
@@ -128,7 +128,7 @@ bool grheap_weak_spec_fits(const GRHEAP_Type * type, size_t bytes) {
 
 void grheap_weak_each_slot(const GRHEAP_Type * type, void * payload,
     void (*fn)(void * user, const void * slot), void * user) {
-  const GRHEAP_WeakSpec * w = type->weak;
+  const GRHEAP_WeakSpec * w = grheap_type_weak(type);
   unsigned char * p = payload;
   if (w->kind == GRHEAP_WEAK_CELL) {
     fn(user, p + w->target_offset);
@@ -188,7 +188,7 @@ static void fixpoint_scan(GRHEAP_Heap * heap) {
     changed = false;
     for (size_t e = 0; e < heap->nweak; e++) {
       unsigned char * payload = heap->weak[e].object;
-      const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+      const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
       if (spec->kind != GRHEAP_EPHEMERON || !marked(heap, payload) ||
           !key_holds(heap, spec, payload)) {
         continue;
@@ -259,7 +259,7 @@ static void consider(Fix * f, uint32_t e) {
     return;
   }
   unsigned char * payload = f->heap->weak[e].object;
-  const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+  const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
   if (marked(f->heap, payload) && key_holds(f->heap, spec, payload)) {
     f->queued[e] = 1;
     f->queue[f->tail++] = e;
@@ -287,7 +287,7 @@ static bool fixpoint_indexed(GRHEAP_Heap * heap) {
   }
   for (size_t e = 0; e < heap->nweak; e++) {
     const GRHEAP_WeakSpec * spec =
-        grheap_header(heap->weak[e].object)->type->weak;
+        grheap_type_weak(grheap_header(heap->weak[e].object)->type);
     count += spec->kind == GRHEAP_EPHEMERON;
   }
   if (count == 0) {
@@ -312,7 +312,7 @@ static bool fixpoint_indexed(GRHEAP_Heap * heap) {
   memset(f.queued, 0, heap->nweak);
   for (size_t e = 0; e < heap->nweak; e++) {
     unsigned char * payload = heap->weak[e].object;
-    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
     if (spec->kind != GRHEAP_EPHEMERON) {
       continue;
     }
@@ -336,7 +336,7 @@ static bool fixpoint_indexed(GRHEAP_Heap * heap) {
   while (f.head < f.tail) {
     uint32_t e = f.queue[f.head++];
     unsigned char * payload = heap->weak[e].object;
-    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
     GRHEAP_Span * s;
     size_t i;
     if (classify(heap, spec, payload, spec->value_offset, &s, &i) == REF_LIVE &&
@@ -429,7 +429,7 @@ void grheap_weak_process(GRHEAP_Heap * heap) {
       continue; /* the cell is dead: dropped, with no callback */
     }
     unsigned char * payload = entry.object;
-    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
     if (spec->kind == GRHEAP_WEAK_CELL) {
       clear_weak_cell(heap, &entry, spec, payload);
     } else {
@@ -448,7 +448,7 @@ void grheap_weak_run_cleared(GRHEAP_Heap * heap) {
     }
     heap->weak[e].pending = false;
     void * payload = heap->weak[e].object;
-    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
     if (spec->cleared != NULL) {
       spec->cleared(payload);
     }

@@ -83,14 +83,14 @@ static void entry_trace(GRHEAP_Tracer * t, void * p) {
   grheap_trace_slot(t, &((Entry *)p)->stale_report);
 }
 
-static const GRHEAP_Type session_type = {
-    "session", sizeof(Session), session_trace, NULL, NULL, NULL, NULL};
-static const GRHEAP_Type cache_type = {
-    "cache", sizeof(Cache), cache_trace, NULL, NULL, NULL, NULL};
-static const GRHEAP_Type entry_type = {
-    "entry", sizeof(Entry), entry_trace, NULL, NULL, NULL, NULL};
-static const GRHEAP_Type report_type = {
-    "report", 4096, NULL, NULL, NULL, NULL, NULL};
+static const GRHEAP_Type session_type = GRHEAP_TYPE_INIT(
+    "session", sizeof(Session), session_trace, NULL, NULL, NULL, NULL);
+static const GRHEAP_Type cache_type = GRHEAP_TYPE_INIT(
+    "cache", sizeof(Cache), cache_trace, NULL, NULL, NULL, NULL);
+static const GRHEAP_Type entry_type = GRHEAP_TYPE_INIT(
+    "entry", sizeof(Entry), entry_trace, NULL, NULL, NULL, NULL);
+static const GRHEAP_Type report_type = GRHEAP_TYPE_INIT(
+    "report", 4096, NULL, NULL, NULL, NULL, NULL);
 
 int main(void) {
   GRCORE_Group * group;

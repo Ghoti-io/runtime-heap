@@ -72,8 +72,8 @@ void probing_destroy(void * payload) {
   }
 }
 
-const GRHEAP_Type kProbed = {"probed", sizeof(Node), node_trace, probing_destroy, nullptr, nullptr, nullptr};
-const GRHEAP_Type kBigProbed = {"big-probed", 300000, nullptr, probing_destroy, nullptr, nullptr, nullptr};
+const GRHEAP_Type kProbed = GRHEAP_TYPE_INIT("probed", sizeof(Node), node_trace, probing_destroy, nullptr, nullptr, nullptr);
+const GRHEAP_Type kBigProbed = GRHEAP_TYPE_INIT("big-probed", 300000, nullptr, probing_destroy, nullptr, nullptr, nullptr);
 
 } // namespace
 

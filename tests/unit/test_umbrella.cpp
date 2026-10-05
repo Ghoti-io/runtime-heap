@@ -35,7 +35,7 @@ TEST(Umbrella, ReachesEveryHeaderOfTheAPI) {
   EXPECT_EQ(grheap_store(nullptr, nullptr, nullptr, nullptr),
       GRHEAP_ERR_INVALID);
   grheap_trace_slot(nullptr, nullptr); // ignored
-  GRHEAP_Type type = {"t", 8, nullptr, nullptr, nullptr, nullptr, nullptr};
+  GRHEAP_Type type = GRHEAP_TYPE_INIT("t", 8, nullptr, nullptr, nullptr, nullptr, nullptr);
   EXPECT_EQ(type.size, 8u);
   // id.h, the weak spec in type.h, the instruments in options.h and store.h.
   uint64_t id = 0;
@@ -62,7 +62,7 @@ TEST(Umbrella, ReachesHeapImages) {
   EXPECT_EQ(grheap_image_refcount(nullptr), 0u);
   EXPECT_EQ(grheap_image_retain(nullptr), nullptr);
   EXPECT_EQ(grheap_image_take(nullptr, nullptr, nullptr), GRHEAP_ERR_INVALID);
-  GRHEAP_RestoreEnv env = {nullptr, nullptr};
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT(nullptr, nullptr);
   EXPECT_EQ(grheap_image_instantiate(nullptr, nullptr, &env), GRHEAP_ERR_INVALID);
   EXPECT_STREQ(GRHEAP_SNAPSHOT_KEY_NAME, "runtime-heap");
 }

@@ -509,6 +509,45 @@ with no written contract has nothing to check against, and the shared variant
 changes the shape of `_range`. It is written now and the barrier work replaces
 the "nothing" in it.
 
+## A type states its own size
+
+A `GRHEAP_Type` is a public struct that the embedder defines as a static
+object, and it has grown twice at the end (`weak`, then the image hooks
+`snapshot` and `restore`), each time forcing an edit of every type in every
+library. After a release a new trailing member would also be a binary break: a
+type compiled before it existed cannot be told from one with garbage in it. So
+it follows runtime-core's rule for `GRCORE_Key` (the argument and the rejected
+alternatives are in that library's `b/key.h` and design document): the first
+member is the `sizeof(GRHEAP_Type)` the type was compiled against, written by
+`GRHEAP_TYPE_INIT(name, size, trace, destroy, weak, snapshot, restore)`, and the
+heap reads a member after `destroy` only through accessors that check the size
+covers it, taking an absent one as NULL (no weak slot, no hook). `size` is the
+payload's, so this member is `struct_size`. `grheap_alloc`, `grheap_alloc_sized`
+and an image's type resolver refuse with `ERR_INVALID`, before anything is read
+or stored, a type whose `struct_size` is below `GRHEAP_TYPE_MIN_SIZE` (the
+layout through `destroy`; zero is the forgotten size) or off the struct's
+alignment; a larger size is accepted and the unknown tail ignored. The header
+of an object points at its type, and only a type that passed that check is ever
+put there, so the mark and sweep read `trace` and `destroy` directly and the
+rest through the accessors. A definition in the old positional form starts with
+a string where there is now a `size_t` and does not compile: the one-time break.
+
+`GRHEAP_RestoreEnv` (`image.h`) is the other struct the embedder fills in and
+the heap reads. It has the same leading `size` and `GRHEAP_RESTORE_ENV_INIT`,
+and `grheap_image_instantiate` and the context restore refuse an environment
+that `grheap_restore_env_valid` does not accept. It has no member after its
+first generation yet, so its tests cover the rule and not an older layout. Not
+given a size: the options and the heap (opaque, set by setters), the stats
+struct (written by the heap, read by the embedder), and `GRHEAP_WeakSpec`,
+which a type points at and which is read whole by this library only.
+`test_type_size.cpp` builds an older-layout type as a heap block exactly as
+large as its `struct_size`, so a read past the end is a finding under ASan and
+Valgrind, arms a weak spec and both image hooks beyond the stated size so that a
+heap that ignores it fails a plain run, and has a full-size control for every
+refusal. An image of objects of a type whose resolver result is invalid is
+refused with the same image otherwise acceptable, so that the refusal is shown
+to come from the size and not from another check.
+
 ## Weak cells and ephemerons
 
 AD-11: "`gc` reports a cleared weak cell to its engine through the cell's

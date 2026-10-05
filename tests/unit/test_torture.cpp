@@ -55,7 +55,7 @@ struct EnvGuard {
 struct Blob {
   unsigned char bytes[64];
 };
-const GRHEAP_Type kBlob = {"blob", sizeof(Blob), nullptr, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kBlob = GRHEAP_TYPE_INIT("blob", sizeof(Blob), nullptr, nullptr, nullptr, nullptr, nullptr);
 
 WorldConfig tortured() {
   WorldConfig c;

@@ -541,7 +541,7 @@ static uint32_t take_type(GRHEAP_Take * t, const GRHEAP_Type * type) {
       return (uint32_t)i;
     }
   }
-  if (type->name == NULL || type->weak != NULL) {
+  if (type->name == NULL || grheap_type_weak(type) != NULL) {
     take_fail(t, GRHEAP_ERR_INVALID);
     return UINT32_MAX;
   }
@@ -622,9 +622,9 @@ static void take_object(GRHEAP_Take * t, size_t i) {
     return;
   }
   obj->extra_off = t->extra.len;
-  if (type->snapshot != NULL) {
+  if (grheap_type_snapshot(type) != NULL) {
     GRHEAP_ImageWriter writer = {t};
-    GRHEAP_Result r = type->snapshot(heap->context, copy, &writer);
+    GRHEAP_Result r = grheap_type_snapshot(type)(heap->context, copy, &writer);
     if (r != GRHEAP_OK) {
       take_fail(t, r);
       return;
@@ -885,13 +885,19 @@ static void remove_objects(GRHEAP_Heap * heap, void ** addrs, size_t count) {
   grheap_sweep(heap);
 }
 
+bool grheap_restore_env_valid(const GRHEAP_RestoreEnv * env) {
+  /* See grheap_type_valid: judged by `size` alone. */
+  return env != NULL && env->size >= GRHEAP_RESTORE_ENV_MIN_SIZE &&
+      env->size % _Alignof(GRHEAP_RestoreEnv) == 0;
+}
+
 /* Checks the image against the heap, without changing anything but the
  * transient arrays it returns: the codec, the resolved types, every record's
  * bounds. `*out_types` is `ntypes` resolved types on success. */
 static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     const GRHEAP_RestoreEnv * env, bool whole_heap, const GRHEAP_Type *** out_types) {
-  if (!grheap_usable(heap) || heap->busy != 0 || env == NULL ||
-      env->resolve == NULL) {
+  if (!grheap_usable(heap) || heap->busy != 0 ||
+      !grheap_restore_env_valid(env) || env->resolve == NULL) {
     return GRHEAP_ERR_INVALID;
   }
   const GRHEAP_ValueCodec * c = &heap->codec;
@@ -925,7 +931,7 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     }
     const GRHEAP_Type * type =
         env->resolve(env->user, (const char *)v->bytes + rec.name_off);
-    if (type == NULL || type->weak != NULL) {
+    if (!grheap_type_valid(type) || grheap_type_weak(type) != NULL) {
       r = GRHEAP_ERR_INVALID;
       break;
     }
@@ -943,7 +949,7 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
       r = GRHEAP_ERR_CORRUPT;
       break;
     }
-    if (o.extra_len != 0 && types[o.type]->restore == NULL) {
+    if (o.extra_len != 0 && grheap_type_restore(types[o.type]) == NULL) {
       r = GRHEAP_ERR_INVALID;
       break;
     }
@@ -1067,12 +1073,12 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
   heap->busy++;
   for (size_t i = 0; r == GRHEAP_OK && i < pending->nobjects; i++) {
     ImgObject o = view_object(v, i);
-    if (types[o.type]->restore == NULL) {
+    if (grheap_type_restore(types[o.type]) == NULL) {
       continue;
     }
     GRHEAP_ImageReader reader = {v->bytes + v->h.extra_off + o.extra_off,
         (size_t)o.extra_len, 0, false};
-    r = types[o.type]->restore(
+    r = grheap_type_restore(types[o.type])(
         heap->context, pending->addrs[i], &reader, env->user);
   }
   heap->busy--;

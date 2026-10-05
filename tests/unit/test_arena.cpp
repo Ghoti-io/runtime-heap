@@ -80,9 +80,9 @@ TEST_F(ArenaTest, ResetRunsEveryHookReleasesEveryChunkAndKeepsTheHeap) {
     new_node(w.heap, i);
   }
   void * large;
-  static const GRHEAP_Type big = {"big", 30000, nullptr, [](void *) {
+  static const GRHEAP_Type big = GRHEAP_TYPE_INIT("big", 30000, nullptr, [](void *) {
     destroyed_log().push_back(1000000);
-  }, nullptr, nullptr, nullptr};
+  }, nullptr, nullptr, nullptr);
   ASSERT_EQ(grheap_alloc(w.heap, &big, &large), GRHEAP_OK);
   EXPECT_GE(w.pages.live, 2);
   ASSERT_EQ(grheap_arena_reset(w.heap), GRHEAP_OK);
@@ -200,8 +200,8 @@ TEST_F(ArenaTest, ResetInsideADestroyHookIsRefused) {
   static GRHEAP_Heap * the_heap;
   the_heap = w.heap;
   inner = GRHEAP_OK;
-  static const GRHEAP_Type resetting = {"resetting", 16, nullptr,
-      [](void *) { inner = grheap_arena_reset(the_heap); }, nullptr, nullptr, nullptr};
+  static const GRHEAP_Type resetting = GRHEAP_TYPE_INIT("resetting", 16, nullptr,
+      [](void *) { inner = grheap_arena_reset(the_heap); }, nullptr, nullptr, nullptr);
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &resetting, &p), GRHEAP_OK);
   ASSERT_EQ(grheap_arena_reset(w.heap), GRHEAP_OK);

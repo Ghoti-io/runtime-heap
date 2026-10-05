@@ -406,7 +406,7 @@ static bool ephemeron_round(Retain * r) {
   size_t before = r->count;
   for (size_t e = 0; e < heap->nweak && !r->found && !r->failed; e++) {
     unsigned char * payload = heap->weak[e].object;
-    const GRHEAP_WeakSpec * spec = grheap_header(payload)->type->weak;
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(grheap_header(payload)->type);
     size_t eph_index;
     if (spec->kind != GRHEAP_EPHEMERON ||
         lookup(r, payload, &eph_index) == NULL) {

@@ -22,14 +22,14 @@ void boxed_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_word(t, &static_cast<Boxed *>(payload)->word);
 }
 
-const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kBoxed = GRHEAP_TYPE_INIT("boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr, nullptr, nullptr);
 
 /* A payload holding one raw slot, whatever it contains. */
 void slotted_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, static_cast<void **>(payload));
 }
 
-const GRHEAP_Type kSlotted = {"slotted", 16, slotted_trace, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kSlotted = GRHEAP_TYPE_INIT("slotted", 16, slotted_trace, nullptr, nullptr, nullptr, nullptr);
 
 void add_source(HeapWorld & w, HeldRoots & held) {
   ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kHeldSource, &held),

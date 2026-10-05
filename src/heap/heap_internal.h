@@ -326,6 +326,23 @@ static inline GRHEAP_Header * grheap_header(void * payload) {
   return (GRHEAP_Header *)((unsigned char *)payload - GRHEAP_HEADER_BYTES);
 }
 
+/* ---- Reading a type -------------------------------------------------------
+ *
+ * A type states how large it is (type.h). A member after `destroy` is read
+ * only through these, which treat a member the type's `struct_size` does not
+ * cover as NULL. Allocation has already refused a type too small to hold the
+ * members before it, so `name`, `size`, `trace` and `destroy` are read
+ * directly. */
+static inline const GRHEAP_WeakSpec * grheap_type_weak(const GRHEAP_Type * t) {
+  return GRHEAP_TYPE_HAS(t, weak) ? t->weak : NULL;
+}
+static inline GRHEAP_SnapshotFn grheap_type_snapshot(const GRHEAP_Type * t) {
+  return GRHEAP_TYPE_HAS(t, snapshot) ? t->snapshot : NULL;
+}
+static inline GRHEAP_RestoreFn grheap_type_restore(const GRHEAP_Type * t) {
+  return GRHEAP_TYPE_HAS(t, restore) ? t->restore : NULL;
+}
+
 /** The cell size of an object with `size` payload bytes. */
 static inline size_t grheap_cell_of_size(uint64_t size) {
   return ((size_t)size + GRHEAP_HEADER_BYTES + 1u + 15u) & ~(size_t)15u;

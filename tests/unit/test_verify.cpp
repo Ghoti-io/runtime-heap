@@ -28,7 +28,7 @@ struct Boxed {
 void boxed_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_word(t, &static_cast<Boxed *>(payload)->word);
 }
-const GRHEAP_Type kBoxed = {"boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kBoxed = GRHEAP_TYPE_INIT("boxed", sizeof(Boxed), boxed_trace, nullptr, nullptr, nullptr, nullptr);
 
 /* 48 bytes, but only the first slot is traced; the rest is data. */
 struct Wide {
@@ -38,7 +38,7 @@ struct Wide {
 void wide_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, &static_cast<Wide *>(payload)->traced);
 }
-const GRHEAP_Type kWide = {"wide", sizeof(Wide), wide_trace, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kWide = GRHEAP_TYPE_INIT("wide", sizeof(Wide), wide_trace, nullptr, nullptr, nullptr, nullptr);
 
 uint64_t violations_of(HeapWorld & w) {
   uint64_t v = 12345;
@@ -210,11 +210,11 @@ TEST_F(VerifyTest, AStoreToAnUntracedSlotIsForgottenWithItsObjectToo) {
   EXPECT_EQ(violations_of(w), 0u);
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK); // wide is garbage
   // The cell comes back as a type whose traced slot lies where that data was.
-  static const GRHEAP_Type kOver = {"over", sizeof(Wide),
+  static const GRHEAP_Type kOver = GRHEAP_TYPE_INIT("over", sizeof(Wide),
       [](GRHEAP_Tracer * t, void * q) {
         grheap_trace_slot(t, &static_cast<Wide *>(q)->data[1]);
       },
-      nullptr, nullptr, nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr);
   void * q;
   ASSERT_EQ(grheap_alloc(w.heap, &kOver, &q), GRHEAP_OK);
   EXPECT_EQ(q, p);
@@ -236,7 +236,7 @@ void owner_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, &g_buffer[1]);
 }
 void owner_destroy(void *) { std::memset(g_buffer, 0, sizeof g_buffer); }
-const GRHEAP_Type kOwner = {"owner", sizeof(Owner), owner_trace, owner_destroy, nullptr, nullptr, nullptr};
+const GRHEAP_Type kOwner = GRHEAP_TYPE_INIT("owner", sizeof(Owner), owner_trace, owner_destroy, nullptr, nullptr, nullptr);
 
 } // namespace
 
@@ -463,12 +463,12 @@ TEST_F(VerifyTest, RefusesNullAndNonOwnersAndACallFromInsideATrace) {
   static GRHEAP_Result inside;
   the_heap = w.heap;
   inside = GRHEAP_OK;
-  static const GRHEAP_Type tracing = {"tracing", 16,
+  static const GRHEAP_Type tracing = GRHEAP_TYPE_INIT("tracing", 16,
       [](GRHEAP_Tracer *, void *) {
         uint64_t x;
         inside = grheap_verify(the_heap, &x);
       },
-      nullptr, nullptr, nullptr, nullptr};
+      nullptr, nullptr, nullptr, nullptr);
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &tracing, &p), GRHEAP_OK);
   GRHEAP_Handle * h;

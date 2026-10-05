@@ -65,8 +65,8 @@ static void node_destroy(void * payload) {
   destroyed++;
 }
 
-static const GRHEAP_Type node_type = {
-    "node", sizeof(Node), node_trace, node_destroy, NULL, NULL, NULL};
+static const GRHEAP_Type node_type = GRHEAP_TYPE_INIT(
+    "node", sizeof(Node), node_trace, node_destroy, NULL, NULL, NULL);
 
 /* Stops the program if a claim is false. Not assert(): an example built with
  * NDEBUG would then prove nothing. */

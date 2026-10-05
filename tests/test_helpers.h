@@ -94,7 +94,8 @@ struct TrackingAllocator {
 /* A page provider over the default one that counts live mappings and can be
  * told to fail, always (`fail`) or for the next `fail_next` maps. */
 struct FakePages {
-  GRCORE_PageProvider vtable;
+  GRCORE_PageProvider vtable =
+      GRCORE_PAGE_PROVIDER_INIT(nullptr, 0, nullptr, nullptr, nullptr);
   bool fail = false;
   long fail_next = 0;
   long maps = 0;
@@ -245,13 +246,13 @@ inline void node_destroy(void * payload) {
   destroyed_log().push_back(static_cast<Node *>(payload)->id);
 }
 
-inline const GRHEAP_Type kNode = {"node", sizeof(Node), node_trace, node_destroy, nullptr, nullptr, nullptr};
+inline const GRHEAP_Type kNode = GRHEAP_TYPE_INIT("node", sizeof(Node), node_trace, node_destroy, nullptr, nullptr, nullptr);
 
 /* A node with no destroy hook, for the tests that count frees by statistics. */
-inline const GRHEAP_Type kPlainNode = {"plain", sizeof(Node), node_trace, nullptr, nullptr, nullptr, nullptr};
+inline const GRHEAP_Type kPlainNode = GRHEAP_TYPE_INIT("plain", sizeof(Node), node_trace, nullptr, nullptr, nullptr, nullptr);
 
 /* A leaf: no pointers, no hook. */
-inline const GRHEAP_Type kLeaf = {"leaf", 16, nullptr, nullptr, nullptr, nullptr, nullptr};
+inline const GRHEAP_Type kLeaf = GRHEAP_TYPE_INIT("leaf", 16, nullptr, nullptr, nullptr, nullptr, nullptr);
 
 inline Node * new_node(GRHEAP_Heap * heap, uint64_t id,
     const GRHEAP_Type * type = &kNode) {
@@ -307,7 +308,7 @@ inline void held_enumerate(GRCORE_Context *, void * value,
   }
 }
 
-inline const GRCORE_RootSource kHeldSource = {"held", held_enumerate};
+inline const GRCORE_RootSource kHeldSource = GRCORE_ROOT_SOURCE_INIT("held", held_enumerate);
 
 /* A range covering `count` words from `first`, read as raw addresses. */
 inline GRCORE_ConservativeRange range_of(const void * first, size_t count) {

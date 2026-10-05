@@ -94,12 +94,12 @@ TEST_F(IdsTest, TheIdIsForgottenBeforeTheDestroyHookRuns) {
   static GRHEAP_Result seen;
   the_heap = w.heap;
   seen = GRHEAP_OK;
-  static const GRHEAP_Type spy = {"spy", 16, nullptr,
+  static const GRHEAP_Type spy = GRHEAP_TYPE_INIT("spy", 16, nullptr,
       [](void *) {
         void * out;
         seen = grheap_object_of_id(the_heap, watched, &out);
       },
-      nullptr, nullptr, nullptr};
+      nullptr, nullptr, nullptr);
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &spy, &p), GRHEAP_OK);
   ASSERT_EQ(grheap_id_of(w.heap, p, &watched), GRHEAP_OK);
@@ -223,14 +223,14 @@ TEST_F(IdsTest, IssuingFromInsideADestroyHookIsRefusedAndAQueryIsNot) {
   static GRHEAP_Result issued;
   static GRHEAP_Result queried;
   the_heap = w.heap;
-  static const GRHEAP_Type probe = {"probe", 16, nullptr,
+  static const GRHEAP_Type probe = GRHEAP_TYPE_INIT("probe", 16, nullptr,
       [](void *) {
         uint64_t id;
         issued = grheap_id_of(the_heap, victim, &id);
         void * out;
         queried = grheap_object_of_id(the_heap, 1, &out);
       },
-      nullptr, nullptr, nullptr};
+      nullptr, nullptr, nullptr);
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &probe, &p), GRHEAP_OK);
   Node * other = new_node(w.heap, 1);

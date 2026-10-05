@@ -48,8 +48,8 @@ void weak_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_slot(t, &c->a);
   grheap_trace_slot(t, &c->b);
 }
-const GRHEAP_Type kWeakCell = {"weak-cell", sizeof(WeakCell), weak_trace, nullptr,
-    &kCellSpec, nullptr, nullptr};
+const GRHEAP_Type kWeakCell = GRHEAP_TYPE_INIT("weak-cell", sizeof(WeakCell), weak_trace, nullptr,
+    &kCellSpec, nullptr, nullptr);
 
 struct Eph {
   uint64_t id;
@@ -58,14 +58,14 @@ struct Eph {
 };
 const GRHEAP_WeakSpec kEphSpec = {GRHEAP_EPHEMERON, 0, offsetof(Eph, key),
     offsetof(Eph, value), false, nullptr};
-const GRHEAP_Type kEph = {"ephemeron", sizeof(Eph), nullptr, nullptr, &kEphSpec,
-    nullptr, nullptr};
+const GRHEAP_Type kEph = GRHEAP_TYPE_INIT("ephemeron", sizeof(Eph), nullptr, nullptr, &kEphSpec,
+    nullptr, nullptr);
 
 /* The same with codec-encoded slots, for an immediate key. */
 const GRHEAP_WeakSpec kWordEphSpec = {GRHEAP_EPHEMERON, 0, offsetof(Eph, key),
     offsetof(Eph, value), true, nullptr};
-const GRHEAP_Type kWordEph = {"word-ephemeron", sizeof(Eph), nullptr, nullptr,
-    &kWordEphSpec, nullptr, nullptr};
+const GRHEAP_Type kWordEph = GRHEAP_TYPE_INIT("word-ephemeron", sizeof(Eph), nullptr, nullptr,
+    &kWordEphSpec, nullptr, nullptr);
 /* Low bit set: an immediate. Low bit clear: a pointer. */
 const GRHEAP_ValueCodec kTagCodec = {1, 0, ~UINT64_C(1), 0, 0};
 
@@ -81,8 +81,8 @@ void word_trace(GRHEAP_Tracer * t, void * payload) {
   grheap_trace_word(t, &n->a);
   grheap_trace_word(t, &n->b);
 }
-const GRHEAP_Type kWordNode = {"word-node", sizeof(WordNode), word_trace,
-    nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kWordNode = GRHEAP_TYPE_INIT("word-node", sizeof(WordNode), word_trace,
+    nullptr, nullptr, nullptr, nullptr);
 
 /* ---- Helpers ---------------------------------------------------------------- */
 
@@ -208,7 +208,7 @@ TEST(Retention, AContextRootSourceSlotIsNamedWithTheSourceAndTheSlotsOrdinal) {
 TEST(Retention, ASecondSourcesSlotsAreNumberedFromZeroUnderThatSourcesName) {
   HeapWorld w(steady());
   Chain c = build_chain(w);
-  static const GRCORE_RootSource kOther = {"other", held_enumerate};
+  static const GRCORE_RootSource kOther = GRCORE_ROOT_SOURCE_INIT("other", held_enumerate);
   uint64_t first = 0, second = addr(c.a);
   HeldRoots h1, h2;
   h1.slots = {&first};
@@ -668,8 +668,8 @@ TEST(Retention, ABusyHeapRefusesTheQueryFromInsideATraceAndADestroy) {
       grheap_retention_release(out);
     }
   };
-  static const GRHEAP_Type kHooked = {"hooked", 16, Hooks::trace, Hooks::destroy,
-      nullptr, nullptr, nullptr};
+  static const GRHEAP_Type kHooked = GRHEAP_TYPE_INIT("hooked", 16, Hooks::trace, Hooks::destroy,
+      nullptr, nullptr, nullptr);
   void * hooked = nullptr;
   ASSERT_EQ(grheap_alloc(w.heap, &kHooked, &hooked), GRHEAP_OK);
   Node * holder = mk(w.heap, 1);
@@ -783,18 +783,18 @@ TEST(Retention, ANonOwnerThreadIsRefused) {
 
 namespace {
 GRCORE_Context * g_ctx_for_remove = nullptr;
-const GRCORE_RootSource kVictim = {"victim", held_enumerate};
+const GRCORE_RootSource kVictim = GRCORE_ROOT_SOURCE_INIT("victim", held_enumerate);
 HeldRoots g_victim_roots;
 void remover_enumerate(GRCORE_Context *, void *, const GRCORE_RootVisitor *) {
   // Breaks roots.h's rule (a source must not remove one) on purpose, so the
   // table is shorter than the count the query read.
   grcore_context_remove_root_source(g_ctx_for_remove, &kVictim, &g_victim_roots);
 }
-const GRCORE_RootSource kRemover = {"remover", remover_enumerate};
+const GRCORE_RootSource kRemover = GRCORE_ROOT_SOURCE_INIT("remover", remover_enumerate);
 
 uint64_t g_outside_slot = 0;
 void outside_trace(GRHEAP_Tracer * t, void *) { grheap_trace_word(t, &g_outside_slot); }
-const GRHEAP_Type kOutside = {"outside", 16, outside_trace, nullptr, nullptr, nullptr, nullptr};
+const GRHEAP_Type kOutside = GRHEAP_TYPE_INIT("outside", 16, outside_trace, nullptr, nullptr, nullptr, nullptr);
 } // namespace
 
 TEST(Retention, ARootSourceThatCannotBeReadFailsTheQueryInsteadOfTruncatingTheRoots) {
@@ -1032,7 +1032,7 @@ void box_enumerate(
     }
   }
 }
-const GRCORE_RootSource kBoxSource = {"box", box_enumerate};
+const GRCORE_RootSource kBoxSource = GRCORE_ROOT_SOURCE_INIT("box", box_enumerate);
 
 const GRHEAP_Type * resolve_plain(void *, const char * name) {
   return std::strcmp(name, "plain") == 0 ? &kPlainNode : nullptr;
@@ -1053,9 +1053,7 @@ TEST(Retention, ItWorksOverAHeapRestoredFromAnImage) {
   Box box;
   box.words = {0, 0};
   ASSERT_EQ(grcore_context_add_root_source(dst.ctx, &kBoxSource, &box), GRCORE_OK);
-  GRHEAP_RestoreEnv env;
-  env.resolve = resolve_plain;
-  env.user = nullptr;
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT(resolve_plain, nullptr);
   ASSERT_EQ(grheap_image_instantiate(dst.heap, image, &env), GRHEAP_OK);
   grheap_image_release(image);
   auto * a = reinterpret_cast<Node *>(box.words[1]);

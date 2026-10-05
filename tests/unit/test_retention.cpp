@@ -738,8 +738,8 @@ void at_poll_handler(GRCORE_Context *, void * value, GRCORE_PollCall *) {
   }
   grheap_retention_release(out);
 }
-const GRCORE_Key kAtPollKey = {"at-poll-query", GRCORE_CARDINALITY_ONE,
-    GRCORE_PHASE_OBSERVE, nullptr, at_poll_handler, nullptr, nullptr, nullptr};
+const GRCORE_Key kAtPollKey = GRCORE_KEY_INIT("at-poll-query", GRCORE_CARDINALITY_ONE,
+    GRCORE_PHASE_OBSERVE, nullptr, at_poll_handler, nullptr, nullptr, nullptr);
 } // namespace
 
 TEST(Retention, AnObserveHandlerAtAPollCanAskAndItWorks) {

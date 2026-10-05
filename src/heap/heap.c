@@ -73,9 +73,9 @@ static void heap_key_destroy(GRCORE_Context * context, void * value) {
   heap->allocator->free_fn(heap->allocator->ctx, heap);
 }
 
-const GRCORE_Key grheap_key = {"runtime-heap", GRCORE_CARDINALITY_ONE,
+const GRCORE_Key grheap_key = GRCORE_KEY_INIT("runtime-heap", GRCORE_CARDINALITY_ONE,
     GRCORE_PHASE_ACT, heap_key_destroy, heap_poll, grheap_key_snapshot,
-    grheap_key_restore, grheap_key_settle};
+    grheap_key_restore, grheap_key_settle);
 
 GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     const GRHEAP_Options * options, GRHEAP_Heap ** out_heap) {

@@ -445,8 +445,8 @@ void probe_destroy(GRCORE_Context * context, void * value) {
 }
 
 /* Registered first, so it is torn down last: after the heap's own key. */
-const GRCORE_Key kProbeKey = {"meter-probe", GRCORE_CARDINALITY_ONE,
-    GRCORE_PHASE_NONE, probe_destroy, nullptr, nullptr, nullptr, nullptr};
+const GRCORE_Key kProbeKey = GRCORE_KEY_INIT("meter-probe", GRCORE_CARDINALITY_ONE,
+    GRCORE_PHASE_NONE, probe_destroy, nullptr, nullptr, nullptr, nullptr);
 
 MeterProbe teardown_meter(bool with_heap) {
   MeterProbe probe;

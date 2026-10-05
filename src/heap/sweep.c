@@ -67,7 +67,10 @@ static size_t sweep_block(GRHEAP_Heap * heap, GRHEAP_Span * s) {
         grheap_shadow_forget_range(heap, (uintptr_t)payload,
             (size_t)(s->cell - GRHEAP_HEADER_BYTES));
         if (type->trace != NULL) {
-          GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_FORGET};
+          GRHEAP_Tracer tracer = {.heap = heap,
+              .mode = GRHEAP_TRACE_FORGET,
+              .payload = payload,
+              .size = (size_t)(s->cell - GRHEAP_HEADER_BYTES)};
           type->trace(&tracer, payload);
         }
       }

@@ -156,6 +156,19 @@ void grheap_mark_extra(GRHEAP_Heap * heap, GRHEAP_Span * span, size_t index) {
   finish(heap);
 }
 
+/* FORGET mode: drops the shadow of a slot a dead object reports. A slot inside
+ * the object's own cell was dropped with the cell's range already, so only the
+ * slots outside it cost a lookup (a big store would otherwise be forgotten
+ * twice). `payload` and `size` name the cell's payload. */
+static void forget_slot(const GRHEAP_Tracer * tracer, const void * slot) {
+  uintptr_t at = (uintptr_t)slot;
+  uintptr_t first = (uintptr_t)tracer->payload;
+  if (at >= first && at - first < tracer->size) {
+    return;
+  }
+  grheap_shadow_set(tracer->heap, at, 0); /* zero removes it */
+}
+
 void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
   if (tracer == NULL || slot == NULL) {
     return;
@@ -173,7 +186,7 @@ void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_FORGET) {
-    grheap_shadow_set(tracer->heap, (uintptr_t)slot, 0); /* zero removes it */
+    forget_slot(tracer, slot);
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_RETAIN) {
@@ -200,7 +213,7 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_FORGET) {
-    grheap_shadow_set(tracer->heap, (uintptr_t)slot, 0);
+    forget_slot(tracer, slot);
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_RETAIN) {

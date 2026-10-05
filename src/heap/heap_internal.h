@@ -140,11 +140,11 @@ struct GRHEAP_Tracer {
   struct GRHEAP_Heap * heap;
   GRHEAP_TraceMode mode;
   const GRHEAP_Type * type; ///< VERIFY: the object being walked.
-  void * payload;           ///< VERIFY: its payload.
+  void * payload;           ///< VERIFY, FORGET: its payload.
   uint64_t found;           ///< VERIFY: violations found by this walk.
   struct GRHEAP_Take * take; ///< IMAGE: the take in progress.
   unsigned char * base;     ///< IMAGE: the copy of the payload being walked.
-  size_t size;              ///< IMAGE: its size.
+  size_t size;              ///< IMAGE, FORGET: its size.
   struct GRHEAP_Retain * retain; ///< RETAIN: the query in progress. `payload`
                             ///< is the holder being expanded.
 };

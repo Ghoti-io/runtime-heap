@@ -84,6 +84,8 @@ this library:
 | `test-asan`, `test-tsan`, `test-valgrind-quiet` | the same tests under ASan+UBSan, ThreadSanitizer and Valgrind |
 | `test-torture` | the ASan+UBSan build, every unit test with `GRHEAP_TORTURE=1 GRHEAP_VERIFY=1` (a collection at every allocation, freed cells poisoned, every store checked) |
 | `coverage` | instrumented run and line report; `COVERAGE_MIN=80` fails below the floor |
+| `check-no-relocation` | fail if the shared library or the static archive of a normal build holds relocation code or a relocation symbol (the one allowed name is `grheap_relocation_available`); `check-gates` shows it failing on a build made with the option |
+| `check-relocation-gates`, `test-relocate` | with `RELOCATE=yes`: plant each relocation defect (an engine that reports a slot through a copy, a field `trace` omits, and eight in the library) and require it to be seen; run every unit test with `GRHEAP_RELOCATE=1` |
 
 ## The API
 
@@ -140,6 +142,15 @@ by default and change no result the program computes (torture does change when
 memory budget; torture collects whatever `set_auto_collect` says, and poisons
 size-class cells only, not a large object's mapping), and are shown to find a planted defect by
 `make check-dynamic-gates`.
+
+**Relocation torture.** A build made with `RELOCATE=yes` (installed into a
+private prefix of its own, under the same package name) can move every unpinned
+object at every collection and poison the old cell, so a reference that was
+visited but not updated reads poison: `GRHEAP_RELOCATE=1`, or
+`grheap_options_set_relocate` from `relocate.h`, which only that build installs.
+It is a test mode, never in the shipped library: a normal build has no
+relocation code or symbol (`make check-no-relocation`), and says so through
+`grheap_relocation_available()`. See `documentation/design.md`.
 
 **Budgets.** Pages and metadata are charged to the context. A collection runs
 when the bytes allocated since the last reach the threshold, once more when a

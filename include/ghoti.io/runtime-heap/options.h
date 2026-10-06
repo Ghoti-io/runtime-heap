@@ -288,6 +288,19 @@ GRHEAP_API GRHEAP_Result grheap_options_set_verify(
  */
 GRHEAP_API GRHEAP_Verify grheap_options_get_verify(const GRHEAP_Options * options);
 
+/**
+ * @brief Whether this library was built with the relocation torture (see
+ *   relocate.h), which is a test-only mode and is absent from every normal
+ *   build.
+ *
+ * A consumer that must run against a relocation build asks this of the heap it
+ * linked and fails if the answer is false, rather than running unmoved and
+ * passing for the wrong reason.
+ *
+ * @return True for a build made with `RELOCATE=yes`; false otherwise.
+ */
+GRHEAP_API bool grheap_relocation_available(void);
+
 #ifdef __cplusplus
 }
 #endif

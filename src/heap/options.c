@@ -36,6 +36,21 @@ bool grheap_env_torture(void) {
   return v != NULL && strcmp(v, "1") == 0;
 }
 
+#ifdef GRHEAP_RELOCATE
+bool grheap_env_relocate(void) {
+  const char * v = getenv("GRHEAP_RELOCATE");
+  return v != NULL && strcmp(v, "1") == 0;
+}
+#endif
+
+bool grheap_relocation_available(void) {
+#ifdef GRHEAP_RELOCATE
+  return true;
+#else
+  return false;
+#endif
+}
+
 GRHEAP_Verify grheap_env_verify(void) {
   const char * v = getenv("GRHEAP_VERIFY");
   if (v == NULL) {
@@ -80,6 +95,9 @@ GRHEAP_Result grheap_options_create(
   o->auto_collect = true;
   o->torture = grheap_env_torture();
   o->verify = grheap_env_verify();
+#ifdef GRHEAP_RELOCATE
+  o->relocate = grheap_env_relocate();
+#endif
   *out_options = o;
   return GRHEAP_OK;
 }
@@ -176,3 +194,18 @@ GRHEAP_Result grheap_options_set_verify(
 GRHEAP_Verify grheap_options_get_verify(const GRHEAP_Options * options) {
   return options == NULL ? GRHEAP_VERIFY_OFF : options->verify;
 }
+
+#ifdef GRHEAP_RELOCATE
+GRHEAP_Result grheap_options_set_relocate(
+    GRHEAP_Options * options, bool enabled) {
+  if (options == NULL) {
+    return GRHEAP_ERR_INVALID;
+  }
+  options->relocate = enabled;
+  return GRHEAP_OK;
+}
+
+bool grheap_options_get_relocate(const GRHEAP_Options * options) {
+  return options == NULL ? false : options->relocate;
+}
+#endif

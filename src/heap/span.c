@@ -148,7 +148,11 @@ GRHEAP_Span * grheap_span_create(
     ncells = kind == GRHEAP_SPAN_ARENA ? map_size / 16u : map_size / cell;
   }
   size_t words = grheap_bit_words(ncells);
+#ifdef GRHEAP_RELOCATE
+  size_t maps = kind == GRHEAP_SPAN_BLOCK ? 3u : 1u;
+#else
   size_t maps = kind == GRHEAP_SPAN_BLOCK ? 2u : 1u;
+#endif
 
   if (!reserve_span_slot(heap)) {
     return NULL;
@@ -171,6 +175,9 @@ GRHEAP_Span * grheap_span_create(
   span->ncells = ncells;
   span->alloc = span->bits;
   span->mark = kind == GRHEAP_SPAN_BLOCK ? span->bits + words : NULL;
+#ifdef GRHEAP_RELOCATE
+  span->stay = kind == GRHEAP_SPAN_BLOCK ? span->bits + 2u * words : NULL;
+#endif
   insert_span(heap, span);
   heap->stats.mapped_bytes += map_size;
   return span;

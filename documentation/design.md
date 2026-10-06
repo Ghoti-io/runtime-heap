@@ -6,8 +6,9 @@ with `gc_store`, registered roots, handles, pins and an arena mode, taken from
 the runtime stack's architecture spine (AD-2, AD-3, AD-11, AD-12, AD-13, AD-14,
 AD-16 to AD-21, AD-26), with weak cells, ephemerons, stable IDs and an identity
 hash, the two verification instruments (GC torture and barrier-verify), the
-barrier contract, CI, heap images (the heap's half of context snapshots) and the
-retention query.
+barrier contract, CI, heap images (the heap's half of context snapshots), the
+retention query and the relocation torture, a test-only mode that moves every
+unpinned object at every collection.
 What is still not here is listed at the end.
 
 ## What this library is
@@ -845,6 +846,123 @@ and the node records.
 - *Depth-first search.* It is cheaper in scratch and finds a chain, but not the
   shortest, and a long chain through a cache is the less useful explanation.
 
+## Relocation torture
+
+The collector never moves an object (above, "Why mark and sweep"), so nothing
+proves that a reference a precise walk reports is one a collector *may rewrite*.
+A compiled frame's stack-map slot, a derived pointer, an engine field that its
+`trace` reports through a copy: each works today and breaks the first time a
+moving collector exists. Compiled call chains make that risk large (AD-28,
+CAP-10 of the calls spec), so this library has a test-only mode that moves
+objects, to find those references now. It exists only in a build made with
+`RELOCATE=yes`.
+
+**What a collection does in the mode.** After marking, weak processing and the
+dropping of dead IDs, and before the sweep (`src/heap/relocate.c`):
+
+1. *Choose.* Every marked object that no conservative range hit and no pin
+   holds goes into a table of `{from, to}` kept in address order. A conservative
+   hit (a mark-time bit per cell, `stay`) or a pin keeps its object in place:
+   that is AD-17, a conservative range cannot be rewritten, and it is the only
+   exemption. If the table cannot be had, nothing moves in this collection.
+2. *Take a new cell for each.* An object whose cell cannot be had stays where it
+   is (counted in `stayed_no_cell`). No old cell is reused until every object has
+   moved, so no object lands where another was.
+3. *Rewrite every reference the collector was shown*, by the new addresses and
+   nothing else: registered root slots and handles; every precise slot of every
+   root source (with the codec, keeping the bits outside the address); every slot
+   a marked object's `trace` reports; and every weak and ephemeron slot in a
+   payload. This is done in the *old* cells, before they are copied, so the copy
+   carries the rewritten slots and a cycle or a self-reference needs no case of
+   its own.
+4. *Copy* each old cell to its new one and mark it.
+5. *Re-address the tables* that hold an address: the weak registry, the ID table
+   and its address index (rebuilt; the dense array is keyed by ID and keeps its
+   order), and the barrier-verify shadow table (the entry of a slot inside a
+   moved cell follows the cell, and the value of a rewritten slot follows what
+   was written to it).
+6. *Free and poison every old cell* as a swept one is (every byte after its
+   free-list link word `0xDD`), without running its `destroy`: the object lives
+   on. A large object's old mapping is returned to the provider whole, as a swept
+   one is, so a stale read of it faults instead of reading poison.
+
+The poisoned old cell is the whole detector. A reference that was visited by the
+mark but not updated is indistinguishable from a good one until its object moves,
+and then it reads poison, the same signal the missing-root gates use. Nothing in
+the phase checks anything.
+
+**Contract.** A move happens only inside a collection, which is a GC point, so no
+C code holds a stale address across it unless it broke the rules (AD-12, AD-17,
+AD-28). It never happens during `grheap_image_take` or a restore (neither
+collects, and a collection between a restore's apply and commit moves nothing,
+because the restore holds the addresses of what it made). A reference that is
+visited but not written (a copy, a root source that reads and does not write), a
+field `trace` leaves out, and an address used as a key outside this library's own
+tables are the defects it finds. runtime-core's compiled-frame pass keeps a
+derived pointer consistent with its base (see its `design.md`).
+
+**Build.** One make variable, `RELOCATE=yes|no` (default `no`, anything else is
+an error), in the style of lang-tang's `JIT=` and `WITH_DEBUG=`. The flag stamps
+record it. A build with it has its own tree (`build/<os>/<build>-reloc`), and is
+installed into a private prefix under the same package name, so a consumer picks
+it by `PKG_CONFIG_PATH`; only that build installs `relocate.h`, and `make
+check-install` checks that the header is installed exactly when
+`grheap_relocation_available()` says the mode is there. The run-time switch is
+`GRHEAP_RELOCATE=1` (the default of every new options object, as `GRHEAP_TORTURE`
+is) and `grheap_options_set_relocate`, which wins. With torture, which makes a
+collection happen at every GC point, it is a move at every GC point.
+
+**The shipped library.** The shared library and the default static archive of a
+build without the option contain no relocation code and no relocation symbol: the
+Makefile leaves `relocate.c` out, the other files guard the few hooks with
+`#ifdef GRHEAP_RELOCATE`, and `make check-no-relocation` reads every symbol name
+and string of both artifacts and fails on any relocation name but the query's.
+`check-gates` shows that gate failing on the artifacts of a build made with the
+option (and passing a clean build), and shows the converse gate
+(`check-relocation-present`) failing on a normal build. The only trace of the
+feature in a normal build is `grheap_relocation_available()`, which returns
+false, a new shipped symbol that exists so that a consumer can fail, not skip,
+when it is pointed at a heap without the mode.
+
+**Seen to fail.** `make check-relocation-gates` builds two small programs twice
+(a slot reported through a copy, and a field `trace` omits; the planted build
+fails under `GRHEAP_RELOCATE=1` naming the poisoned read, passes without it, and
+the control passes under it), and the library itself eight times, each with one
+table or slot kind left un-updated (`GRHEAP_PLANT_RELOC_ROOT_STALE`,
+`_SOURCE_STALE`, `_WEAK_STALE`, `_WEAKSLOT_STALE`, `_IDS_STALE`, `_INDEX_STALE`,
+`_SHADOW_STALE`, `_MOVE_PINNED`), each of which must fail
+`tests/unit/test_relocate.cpp` while the control passes it. `make test-relocate`
+runs every unit test with the mode on, and `make test-torture` under a
+relocating build is a collection and a move at every allocation under ASan+UBSan
+with barrier-verify. A test that keeps an address in a C variable across a
+collection (which is what the mode makes stale) opts its world out with
+`unmoved()`.
+
+**Rejected.**
+
+- *Mutating in place with a shadow copy.* It would keep every address and check
+  that each reported slot still names a live object. That finds nothing: a stale
+  reference to an object that has not moved reads good data, which is exactly the
+  state a moving collector turns into a crash. The poison only means something
+  if the object really left.
+- *A real compacting collector.* It would be the right way to ship a moving
+  collector, and it is a different project: it needs a read of every
+  conservative pin, a policy for large objects, a plan for the image and the
+  snapshot, and a justification in a benchmark. The spine does not ask for it,
+  and a test mode needs only the property that moves are *possible*.
+- *Relocating only the roots.* It would move the registered roots and handles and
+  skip the objects' own slots; but a field an engine reports through a copy is
+  the defect worth finding, and it lives inside objects.
+- *Shipping the mode in every build behind a flag.* A runtime flag in the shipped
+  library is code every consumer carries and a symbol every consumer could call,
+  and the property to prove is that the shipped collector does not move
+  anything. A separate build can be inspected for absence; a flag cannot.
+
+Limits, stated: an old *large* object's mapping is unmapped, so a stale read of
+it faults (loud) rather than reading `0xDD`; a stale address whose block is
+unmapped because every cell moved out of it does the same; and the mode finds
+only a reference the program reads after the move.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the jobs AD-16 names for `gc`: both compilers
@@ -860,9 +978,10 @@ been run: it was checked only for being valid YAML that names these jobs.
 No byte format or file for a heap image, and no sharing of one between
 processes (an image is an in-memory object). No image of a heap with a weak
 cell, an ephemeron, a C root, a handle, a pin or a conservative range. No image
-that follows a slot outside its object's payload. No moving, no generations, no concurrent or incremental marking, and no stack
+that follows a slot outside its object's payload. No moving collector (the test-only relocation torture moves, to find what one would break), no generations, no concurrent or incremental marking, and no stack
 scanning of its own: a stack's words come from a root source, the embedder's or
-A's. No real barrier (store or remembered-set work): the contract above is the
+A's. (The relocation torture moves objects in a test-only build; it is not a
+moving collector for production.) No real barrier (store or remembered-set work): the contract above is the
 design, and barrier-verify polices the discipline. No shared heap: the shared
 variant of the contract is designed, not built (AD-7, tier 2). A weak cell's
 `cleared` callback cannot allocate in the heap; an engine that wants to enqueue

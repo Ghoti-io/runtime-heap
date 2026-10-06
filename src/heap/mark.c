@@ -193,6 +193,12 @@ void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
     grheap_retention_trace(tracer, slot, false);
     return;
   }
+#ifdef GRHEAP_RELOCATE
+  if (tracer->mode == GRHEAP_TRACE_RELOCATE) {
+    grheap_reloc_slot(tracer, slot, false);
+    return;
+  }
+#endif
   mark_precise(tracer->heap, (uint64_t)(uintptr_t)*slot);
 }
 
@@ -220,6 +226,12 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
     grheap_retention_trace(tracer, slot, true);
     return;
   }
+#ifdef GRHEAP_RELOCATE
+  if (tracer->mode == GRHEAP_TRACE_RELOCATE) {
+    grheap_reloc_slot(tracer, slot, true);
+    return;
+  }
+#endif
   uint64_t address;
   if (grheap_decode(tracer->heap, *slot, &address)) {
     mark_precise(tracer->heap, address);
@@ -236,7 +248,7 @@ static void visit_slot(void * user, uint64_t * slot) {
 
 /* A conservative word: anything inside an allocated cell counts, interior and
  * one-past-the-end included. In a non-moving heap marking is all the pinning
- * there is to do. */
+ * there is to do; a relocation build also records that the cell must stay. */
 static void mark_conservative(GRHEAP_Heap * heap, uint64_t address) {
   GRHEAP_Span * span;
   size_t index;
@@ -245,6 +257,9 @@ static void mark_conservative(GRHEAP_Heap * heap, uint64_t address) {
     return;
   }
   heap->stats.conservative_hits++;
+#ifdef GRHEAP_RELOCATE
+  grheap_reloc_stay(span, index);
+#endif
   mark_cell(heap, span, index);
 }
 
@@ -285,6 +300,16 @@ void grheap_mark_pinned(GRHEAP_Heap * heap) {
 void grheap_mark(GRHEAP_Heap * heap) {
   heap->mark_top = 0;
   heap->mark_overflow = false;
+#ifdef GRHEAP_RELOCATE
+  if (heap->relocate) {
+    for (size_t i = 0; i < heap->nspans; i++) {
+      GRHEAP_Span * s = heap->spans[i];
+      if (s->stay != NULL) {
+        memset(s->stay, 0, grheap_bit_words(s->ncells) * sizeof(uint64_t));
+      }
+    }
+  }
+#endif
 
   for (size_t i = 0; i < heap->nroots; i++) {
     mark_precise(heap, (uint64_t)(uintptr_t)*heap->roots[i]);

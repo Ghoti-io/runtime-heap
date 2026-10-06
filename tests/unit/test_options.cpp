@@ -147,6 +147,17 @@ TEST(Options, TheHeapReadsThemOnceAndCopiesWhatItNeeds) {
   EXPECT_EQ(w.stats().collections, 0u);
 }
 
+TEST(Options, TheRelocationQuerySaysWhetherThisBuildHasTheTestOnlyMode) {
+  // Only a build made with RELOCATE=yes (which defines GRHEAP_RELOCATE for the
+  // library and the tests alike) has relocation torture; every other build says
+  // so through this one query and carries nothing else of it.
+#ifdef GRHEAP_RELOCATE
+  EXPECT_TRUE(grheap_relocation_available());
+#else
+  EXPECT_FALSE(grheap_relocation_available());
+#endif
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

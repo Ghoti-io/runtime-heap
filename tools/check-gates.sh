@@ -19,6 +19,14 @@
 # library, one that links the stubs of the two allowed dependencies (cutil and
 # runtime-core), and one that links a BRANCH-suffixed cutil.
 #
+# The relocation gates are checked here too. check-no-relocation.sh reads the
+# artifacts of two builds the Makefile makes (PLAIN_ARTIFACTS, a normal build,
+# and RELOC_ARTIFACTS, one made with RELOCATE=yes): the normal build must pass
+# its absence check and fail its presence check, and the option build the
+# reverse, each library alone as well as both, and an empty population fails.
+# check-symbols' leaving relocate.h out of a normal build is shown against a
+# fixture header.
+#
 # The dynamic gates (torture, barrier-verify) have their own script,
 # check-dynamic-gates.sh; this file checks that it too fails on an empty
 # population and on a program it cannot build. Run through make, which supplies
@@ -264,6 +272,66 @@ $(cat "$sym/build.log")"
       "$Y" "$sym/good.so" "$tok" "$FIX/symbols/control" grheap_state_digest
     expect_fail 'symbols/planted-test-only-code-shipped' 'grheap_state_digest' \
       "$Y" "$sym/testonly.so" "$tok" "$FIX/symbols/control" grheap_state_digest
+  fi
+fi
+
+printf 'check-no-relocation\n'
+N="$HERE/check-no-relocation.sh"
+if [ "$(uname -s)" != Linux ]; then
+  printf '  (skipped: the gate reads nm output, Linux only)\n'
+elif [ -z "${PLAIN_ARTIFACTS:-}" ] || [ -z "${RELOC_ARTIFACTS:-}" ]; then
+  fail "PLAIN_ARTIFACTS and RELOC_ARTIFACTS are not set: run this through 'make check-gates', which builds both"
+else
+  plain_so="${PLAIN_ARTIFACTS%% *}"; plain_a="${PLAIN_ARTIFACTS##* }"
+  reloc_so="${RELOC_ARTIFACTS%% *}"; reloc_a="${RELOC_ARTIFACTS##* }"
+  expect_pass 'relocation/control: a normal build (shared and static)' "$N" --absent $PLAIN_ARTIFACTS
+  expect_fail 'relocation/planted: a build with the option, shared and static' 'grheap_reloc_run' \
+    "$N" --absent $RELOC_ARTIFACTS
+  expect_fail 'relocation/planted: the option build'"'"'s shared library alone' 'contains relocation code' \
+    "$N" --absent "$reloc_so"
+  expect_fail 'relocation/planted: the option build'"'"'s static archive alone' 'contains relocation code' \
+    "$N" --absent "$reloc_a"
+  expect_pass 'relocation/control: a normal build'"'"'s shared library alone' "$N" --absent "$plain_so"
+  expect_pass 'relocation/control: a normal build'"'"'s static archive alone' "$N" --absent "$plain_a"
+  expect_pass 'relocation/present: a build with the option' "$N" --present $RELOC_ARTIFACTS
+  expect_fail 'relocation/planted: a normal build where the option was wanted' 'lacks the relocation phase' \
+    "$N" --present $PLAIN_ARTIFACTS
+  expect_fail 'relocation/empty population' 'measuring nothing' "$N" --absent
+  expect_fail 'relocation/missing artifact' 'measuring nothing' "$N" --absent "$work/absent.so"
+  # An object with no grheap symbol says nothing about relocation.
+  printf 'int unrelated(void) { return 1; }\n' > "$work/unrelated.c"
+  if $CC -shared -fPIC -o "$work/unrelated.so" "$work/unrelated.c" 2>/dev/null; then
+    expect_fail 'relocation/an object with no grheap symbol' 'measuring nothing' "$N" --absent "$work/unrelated.so"
+  else
+    fail "could not build the unrelated shared object"
+  fi
+  # A library whose only relocation name is the query passes; any other
+  # name that contains "reloc" does not.
+  printf 'int ghotiio_runtime_heap_0_grheap_relocation_available(void) { return 0; }\nint ghotiio_runtime_heap_0_grheap_x(void) { return 1; }\n' > "$work/query.c"
+  printf 'int ghotiio_runtime_heap_0_grheap_relocation_available(void) { return 0; }\nint ghotiio_runtime_heap_0_grheap_x(void) { return 1; }\nint ghotiio_runtime_heap_0_grheap_reloc_sneaked(void) { return 2; }\n' > "$work/sneak.c"
+  if $CC -shared -fPIC -o "$work/query.so" "$work/query.c" 2>/dev/null &&
+      $CC -shared -fPIC -o "$work/sneak.so" "$work/sneak.c" 2>/dev/null; then
+    expect_pass 'relocation/control: only the query' "$N" --absent "$work/query.so"
+    expect_fail 'relocation/planted: one stray relocation name beside the query' 'grheap_reloc_sneaked' \
+      "$N" --absent "$work/sneak.so"
+  else
+    fail "could not build the query fixtures"
+  fi
+  # check-symbols leaves relocate.h out of a normal build only.
+  Y="$HERE/check-symbols.sh"
+  mkdir -p "$work/relroot/include/ghoti.io/runtime-heap"
+  cp -r "$FIX/symbols/control/include" "$FIX/symbols/control/src" "$work/relroot/"
+  printf '#ifndef GHOTI_IO_GRHEAP_RELOCATE_H\n#define GHOTI_IO_GRHEAP_RELOCATE_H\n#include <ghoti.io/runtime-heap/macros.h>\nGRHEAP_API int grheap_options_set_relocate(void);\n#endif\n' \
+    > "$work/relroot/include/ghoti.io/runtime-heap/relocate.h"
+  tok=ghotiio_runtime_heap_0
+  printf 'int %s_grheap_ctx_make(void) { return 1; }\n' "$tok" > "$work/relgood.c"
+  if $CC -shared -fPIC -o "$work/relgood.so" "$work/relgood.c" 2>/dev/null; then
+    expect_pass 'symbols/relocate.h in a normal build (not exported, not installed)' \
+      "$Y" "$work/relgood.so" "$tok" "$work/relroot" "" no
+    expect_fail 'symbols/planted: relocate.h declares a function a RELOCATE=yes build does not export' 'grheap_options_set_relocate' \
+      "$Y" "$work/relgood.so" "$tok" "$work/relroot" "" yes
+  else
+    fail "could not build the relocate.h symbol fixture"
   fi
 fi
 

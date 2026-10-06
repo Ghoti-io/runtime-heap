@@ -14,6 +14,18 @@ SUITE := ghoti.io
 PROJECT := runtime-heap
 
 BUILD ?= release
+
+# The relocation torture (CAP-10): a test-only mode that moves every unpinned
+# object at every collection. Off by default, and a build without it contains no
+# relocation code and no relocation symbol (make check-no-relocation says so).
+# A build with it has its own tree (build/<os>/<build>-reloc), and is installed
+# into a prefix of its own under the same package name, so a consumer picks it by
+# PKG_CONFIG_PATH. In the style of lang-tang's JIT= and WITH_DEBUG=.
+RELOCATE ?= no
+ifeq ($(filter yes no,$(RELOCATE)),)
+$(error RELOCATE must be yes or no, not '$(RELOCATE)')
+endif
+
 MAJOR_VERSION := 0
 MINOR_VERSION := 0.0
 VERSION_MINOR_ONLY := $(word 1,$(subst ., ,$(MINOR_VERSION)))
@@ -133,6 +145,14 @@ else
     $(error Unsupported OS: $(UNAME_S))
 endif
 
+# The two trees the relocation gates compare. The option build lives beside the
+# normal one and never in it, so no object is linked into the wrong library.
+BUILD_PLAIN := $(BUILD)
+BUILD_RELOC := $(BUILD)-reloc
+ifeq ($(RELOCATE),yes)
+override BUILD := $(BUILD_RELOC)
+endif
+
 ifdef PREFIX
 INCLUDE_INSTALL_PATH := $(PREFIX)/include
 LIB_INSTALL_PATH := $(PREFIX)/lib
@@ -151,7 +171,12 @@ endif
 PKG_CONFIG_LOOKUP_PATH := $(if $(PKG_CONFIG_PATH_ENV),$(PKG_CONFIG_PATH_ENV):)$(PC_INSTALL_PATH)
 
 CXX := g++
-CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
+ifeq ($(RELOCATE),yes)
+RELOCATE_FLAGS := -DGRHEAP_RELOCATE
+else
+RELOCATE_FLAGS :=
+endif
+CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c++20 -O1 -g $(RELOCATE_FLAGS) $(EXTRA_CXXFLAGS)
 CC := cc
 # -Wstrict-aliasing=1 and -fstrict-aliasing, named rather than inherited.
 # -Wall sets the aliasing warning to level 3, which is silent on the probe
@@ -162,7 +187,7 @@ CC := cc
 # shape is reported at level 1 and silent at 0, 2, and 3. Do not simplify it
 # to `*(int *)&local`, which fires at every level from 1 up and certifies
 # nothing. check-aliasing is the measurement.
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfloat-conversion -fstrict-aliasing -Wstrict-aliasing=1 -Wno-error=unused-function -Wfatal-errors -std=c17 -pthread $(OPT_CFLAGS) -g $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfloat-conversion -fstrict-aliasing -Wstrict-aliasing=1 -Wno-error=unused-function -Wfatal-errors -std=c17 -pthread $(OPT_CFLAGS) -g $(RELOCATE_FLAGS) $(EXTRA_CFLAGS)
 ifeq ($(OS_NAME), Windows)
 CFLAGS += -DGRHEAP_STATIC
 CXXFLAGS += -DGRHEAP_STATIC
@@ -218,6 +243,12 @@ endif
 INCLUDE += $(RTCORE_CFLAGS)
 
 SOURCES := $(shell find src -type f -name '*.c')
+# The relocation phase is compiled only when asked for. Leaving the file out is
+# what keeps its code and its symbols out of a normal build; the preprocessor
+# guards in the other files are the second wall.
+ifneq ($(RELOCATE),yes)
+SOURCES := $(filter-out src/heap/relocate.c,$(SOURCES))
+endif
 LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 # Code that only a test calls. It is in the static archive the tests link and
@@ -233,8 +264,13 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 
 # coverage clears this: --coverage links the gcov runtime, whose mangle_path
 # check-symbols is right to reject in a shipping library.
+ifeq ($(RELOCATE),yes)
+RELOCATE_GATES := check-relocation-present check-relocation-gates
+else
+RELOCATE_GATES := check-no-relocation
+endif
 TEST_GATES ?= check-symbols check-aliasing check-stamps check-labels \
-	check-edges check-gates check-dynamic-gates examples
+	check-edges check-gates check-dynamic-gates $(RELOCATE_GATES) examples
 
 VALGRIND_FLAGS := --leak-check=full --show-leak-kinds=definite,indirect,possible --track-origins=yes --error-exitcode=1 --suppressions=tests/valgrind.supp
 
@@ -253,7 +289,13 @@ CORELIBRARY := -Wl,--whole-archive $(APP_DIR)/$(STATIC_TARGET) -Wl,--no-whole-ar
 # undefined-reference link error on the platform where it applies.
 TEST_LDFLAGS :=
 
-TEST_PAIRS := $(shell find tests -type f -name 'test_*.cpp' 2>/dev/null | sort | grep -v test_helpers | while read f; do \
+# test_relocate.cpp drives the relocation API, which only a relocation build has.
+ifeq ($(RELOCATE),yes)
+TEST_EXCLUDE := test_helpers
+else
+TEST_EXCLUDE := test_helpers\|test_relocate
+endif
+TEST_PAIRS := $(shell find tests -type f -name 'test_*.cpp' 2>/dev/null | sort | grep -v '$(TEST_EXCLUDE)' | while read f; do \
 	echo "$$f|$$(basename "$$f" .cpp | sed 's/test_/test/; s/^test\([a-z]\)/test\U\1/')"; done)
 TEST_SOURCES := $(foreach pair,$(TEST_PAIRS),$(word 1,$(subst |, ,$(pair))))
 TEST_NAMES := $(foreach pair,$(TEST_PAIRS),$(word 2,$(subst |, ,$(pair))))
@@ -369,6 +411,7 @@ $(APP_DIR)/examples/%$(EXE_EXTENSION): examples/%.c $(APP_DIR)/$(STATIC_TARGET) 
 
 .PHONY: clean cloc docs docs-pdf examples coverage check-symbols check-stamps check-aliasing
 .PHONY: check-labels check-edges check-gates check-dynamic-gates bench test-tsan test-torture
+.PHONY: check-no-relocation check-relocation-present check-relocation-gates test-relocate
 .PHONY: all install test test-quiet test-asan test-valgrind test-valgrind-quiet test-watch uninstall watch
 .PHONY: all-debug install-debug test-debug test-valgrind-debug test-watch-debug uninstall-debug watch-debug
 .PHONY: fuzz fuzz-clean
@@ -465,13 +508,56 @@ check-edges: $(APP_DIR)/$(TARGET) ## Fail on a forbidden #include or NEEDED edge
 DYNAMIC_GATE_ENV = CC="$(CC)" CFLAGS="$(CFLAGS)" INCLUDE="$(INCLUDE)" \
 	LIBS="$(LDFLAGS) $(CORELIBRARY) $(CUTIL_LIBS)" LD_LIBRARY_PATH="$(TEST_LD_PATH)"
 
-check-gates: $(APP_DIR)/$(STATIC_TARGET) ## Prove each gate fails on its planted defect and passes its control
-	@$(DYNAMIC_GATE_ENV) tools/check-gates.sh
+# The relocation gates' self-test needs the artifacts of both builds, whichever
+# this make is: a normal build to pass the absence gate, and one made with the
+# option to fail it. Each is built by a nested make into its own tree.
+PLAIN_APP_DIR := ./build/$(BUILD_PLAIN)/apps
+RELOC_APP_DIR := ./build/$(BUILD_RELOC)/apps
+RELOC_ARTIFACTS = $(RELOC_APP_DIR)/$(TARGET) $(RELOC_APP_DIR)/$(STATIC_TARGET)
+PLAIN_ARTIFACTS = $(PLAIN_APP_DIR)/$(TARGET) $(PLAIN_APP_DIR)/$(STATIC_TARGET)
+
+.PHONY: both-builds
+both-builds:
+	@$(MAKE) --no-print-directory RELOCATE=no all
+	@$(MAKE) --no-print-directory RELOCATE=yes all
+
+check-gates: $(APP_DIR)/$(STATIC_TARGET) both-builds ## Prove each gate fails on its planted defect and passes its control
+	@$(DYNAMIC_GATE_ENV) PLAIN_ARTIFACTS="$(PLAIN_ARTIFACTS)" RELOC_ARTIFACTS="$(RELOC_ARTIFACTS)" \
+		RELOCATE=$(RELOCATE) tools/check-gates.sh
 
 # GC torture and barrier-verify are instruments, and are seen to find a planted
 # defect (a missing root, a missing store) and to pass their controls.
 check-dynamic-gates: $(APP_DIR)/$(STATIC_TARGET) | $(APP_DIR)/$(TARGET) ## Prove torture and barrier-verify catch a planted missing root and store
 	@$(DYNAMIC_GATE_ENV) tools/check-dynamic-gates.sh
+
+# A normal build carries no relocation code and no relocation symbol: its shared
+# library and its static archive are read for both (check-gates.sh shows this
+# fails on a build made with the option). The one name allowed is the query that
+# says the mode is absent.
+check-no-relocation: $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET) ## Fail if a normal build contains relocation code or a relocation symbol
+ifeq ($(OS_NAME), Linux)
+	@tools/check-no-relocation.sh --absent $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET)
+else
+	@printf 'check-no-relocation: skipped (Linux only)\n'
+endif
+
+# The converse, for a build made with the option: that the option really put
+# the code in, so that a relocation arm run against it is not running unmoved.
+check-relocation-present: $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET) ## Fail if a RELOCATE=yes build lacks the relocation code
+ifeq ($(OS_NAME), Linux)
+	@tools/check-no-relocation.sh --present $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET)
+else
+	@printf 'check-relocation-present: skipped (Linux only)\n'
+endif
+
+# Each relocation defect planted in the library, one at a time, must make
+# tests/unit/test_relocate fail, and the control must pass it (RELOCATE=yes).
+check-relocation-gates: $(APP_DIR)/$(STATIC_TARGET) ## Prove the relocation tests fail on each planted library defect (RELOCATE=yes)
+ifeq ($(RELOCATE),yes)
+	@MAKE="$(MAKE)" $(DYNAMIC_GATE_ENV) tools/check-relocation-gates.sh
+else
+	@printf 'check-relocation-gates: needs RELOCATE=yes\n' >&2; exit 1
+endif
 
 ####################################################################
 # Benchmarks (AD-26)
@@ -500,7 +586,7 @@ endif
 
 check-symbols: $(APP_DIR)/$(TARGET) ## Fail if any exported symbol lacks the version namespace
 ifeq ($(OS_NAME), Linux)
-	@tools/check-symbols.sh $(APP_DIR)/$(TARGET) $(LIBVER_SYMBOL) . "$(TEST_ONLY_SYMBOLS)"
+	@tools/check-symbols.sh $(APP_DIR)/$(TARGET) $(LIBVER_SYMBOL) . "$(TEST_ONLY_SYMBOLS)" $(RELOCATE)
 else
 	@printf 'check-symbols: skipped (Linux only)\n'
 endif
@@ -518,6 +604,21 @@ test: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) $(BENCH_EXECUTABLES) $(TEST_GATES
 		printf '\n### Benchmark smoke %s ###\n\n' "$$(basename $$b $(EXE_EXTENSION))"; \
 		LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$b --smoke || exit 1; \
 	done
+
+# The whole unit suite with GRHEAP_RELOCATE=1: every collection moves every
+# unpinned object, and a test that keeps an address in a C variable across one
+# turns relocation off for its own world (unmoved() in tests/test_helpers.h).
+# Only a build made with RELOCATE=yes has the mode.
+test-relocate: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) ## Run every unit test with relocation on (RELOCATE=yes)
+ifeq ($(RELOCATE),yes)
+	@for test_exe in $(TEST_EXECUTABLES); do \
+		printf '\n### Relocating %s ###\n\n' "$$(basename $$test_exe)"; \
+		GRHEAP_RELOCATE=1 LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$test_exe --gtest_brief=1 || exit 1; \
+	done
+	@printf '\nRelocating suite clean.\n'
+else
+	@printf 'test-relocate: needs RELOCATE=yes\n' >&2; exit 1
+endif
 
 test-quiet: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) ## Run tests, one line per suite
 	@total_tests=0; total_passed=0; total_failed=0; total_time=0; failed_suites=""; any_failed=0; \
@@ -683,6 +784,8 @@ test-asan: $(ASAN_TEST_EXECUTABLES) ## Build with ASan+UBSan and run the tests
 	done
 	@printf '\nASan+UBSan suite clean.\n'
 
+# (With RELOCATE=yes it is also under relocation torture: every one of those
+# collections moves every unpinned object.)
 # The whole unit suite under GC torture and barrier-verify (abort), in the
 # ASan+UBSan tree: a collection at every allocation and ACT poll, every freed
 # cell poisoned, every pointer store checked against its shadow. A test that
@@ -692,7 +795,7 @@ test-asan: $(ASAN_TEST_EXECUTABLES) ## Build with ASan+UBSan and run the tests
 test-torture: $(ASAN_TEST_EXECUTABLES) ## ASan+UBSan build, every unit test with GRHEAP_TORTURE=1 GRHEAP_VERIFY=1
 	@for test_exe in $(ASAN_TEST_EXECUTABLES); do \
 		printf '\n### Torture + verify %s ###\n\n' "$$(basename $$test_exe)"; \
-		GRHEAP_TORTURE=1 GRHEAP_VERIFY=1 \
+		GRHEAP_TORTURE=1 GRHEAP_VERIFY=1 $(if $(filter yes,$(RELOCATE)),GRHEAP_RELOCATE=1) \
 		$(ASAN_PRELOAD) \
 		LD_LIBRARY_PATH="$(ASAN_APP_DIR):$(LIB_INSTALL_PATH)/$(SUITE)" \
 			$$test_exe --gtest_brief=1 || exit 1; \
@@ -815,6 +918,9 @@ endif
 	@if [ -d $(GEN_DIR)/ghoti.io ]; then \
 		cp -r $(GEN_DIR)/ghoti.io $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/ ; \
 	fi
+	@if [ "$(RELOCATE)" != yes ]; then \
+		rm -f $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/ghoti.io/$(PROJECT)/relocate.h ; \
+	fi
 	@mkdir -p $(PKGCONFIG_INSTALL_PATH)
 	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(PC_LIB_DIR)|$(PC_LIB_DIR)|g; s|(PC_INCLUDE_DIR)|$(PC_INCLUDE_DIR)|g; s|(REQUIRES)|$(PC_REQUIRES)|g' > $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
 ifeq ($(OS_NAME), Linux)
@@ -899,15 +1005,15 @@ help: ## Display this help
 
 $(FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CC) $(CXX) $(LIB_CFLAGS) $(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS) $(TEST_LDFLAGS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)' > $@.new
+	@printf '%s\n' 'RELOCATE=$(RELOCATE) $(CC) $(CXX) $(LIB_CFLAGS) $(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS) $(TEST_LDFLAGS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(TSAN_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CC) $(CXX) $(TSAN_CFLAGS) $(TSAN_CXXFLAGS) $(TSAN_LDFLAGS) $(INCLUDE) $(TSAN_CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS)' > $@.new
+	@printf '%s\n' 'RELOCATE=$(RELOCATE) $(CC) $(CXX) $(TSAN_CFLAGS) $(TSAN_CXXFLAGS) $(TSAN_LDFLAGS) $(INCLUDE) $(TSAN_CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(ASAN_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CC) $(CXX) $(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE) $(ASAN_CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS)' > $@.new
+	@printf '%s\n' 'RELOCATE=$(RELOCATE) $(CC) $(CXX) $(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE) $(ASAN_CORELIBRARY) $(RTCORE_LIBS) $(CUTIL_LIBS) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@

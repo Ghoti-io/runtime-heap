@@ -63,6 +63,10 @@
 #include <ghoti.io/runtime-core/b/roots.h>
 #include <ghoti.io/runtime-core/b/snapshot.h>
 
+#ifdef GRHEAP_RELOCATE
+#include <ghoti.io/runtime-heap/relocate.h>
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -109,6 +113,9 @@ typedef struct GRHEAP_Span {
   uint64_t * alloc;  ///< One bit per cell (BLOCK) or granule (ARENA).
   uint64_t * mark;   ///< BLOCK: one bit per cell. NULL for an ARENA.
   uint8_t * pins;    ///< A pin count per cell (BLOCK) or granule (ARENA), made on the first pin.
+#ifdef GRHEAP_RELOCATE
+  uint64_t * stay;   ///< BLOCK: cells a conservative hit or a pin keeps in place this collection.
+#endif
   struct GRHEAP_Span * next_avail; ///< The class's list of blocks with room.
   uint64_t bits[];   ///< Storage for `alloc` and `mark`.
 } GRHEAP_Span;
@@ -128,7 +135,10 @@ typedef enum {
   GRHEAP_TRACE_IMAGE,    ///< An image take: turn the slot into an index.
   GRHEAP_TRACE_SHADOW,   ///< After a restore: record the slot as stored.
   GRHEAP_TRACE_RETAIN,   ///< A retention query: record the reference found.
-  GRHEAP_TRACE_FORGET    ///< A dead object: drop the shadow of every slot it reports.
+  GRHEAP_TRACE_FORGET,   ///< A dead object: drop the shadow of every slot it reports.
+#ifdef GRHEAP_RELOCATE
+  GRHEAP_TRACE_RELOCATE  ///< Relocation: rewrite the slot to its target's new address.
+#endif
 } GRHEAP_TraceMode;
 
 struct GRHEAP_Take; /* image.c */
@@ -176,7 +186,18 @@ struct GRHEAP_Options {
   bool auto_collect;
   bool torture;
   GRHEAP_Verify verify;
+#ifdef GRHEAP_RELOCATE
+  bool relocate;
+#endif
 };
+
+#ifdef GRHEAP_RELOCATE
+/** One object moved by a collection: where it was and where it is. */
+typedef struct GRHEAP_RelocMove {
+  uintptr_t from; ///< The old payload.
+  uintptr_t to;   ///< The new payload, or zero if no cell could be had.
+} GRHEAP_RelocMove;
+#endif
 
 /** The heap. */
 struct GRHEAP_Heap {
@@ -229,6 +250,13 @@ struct GRHEAP_Heap {
   uint64_t next_id;                   ///< The last ID issued.
 
   struct GRHEAP_Pending * pending;    ///< A restore between APPLY and COMMIT.
+
+#ifdef GRHEAP_RELOCATE
+  bool relocate;                      ///< Every collection moves what it may.
+  GRHEAP_RelocationStats reloc_stats;
+  GRHEAP_RelocMove * reloc_moves;     ///< During a collection: sorted by `from`.
+  size_t reloc_count;
+#endif
 
   unsigned busy;                      ///< Inside a collection, trace or destroy.
   uint64_t since_collect;             ///< Cell bytes allocated since the last.
@@ -394,6 +422,49 @@ GRHEAP_INTERNAL_API void grheap_roots_free(GRHEAP_Heap * heap);
 
 /** Clears every handle's object. */
 GRHEAP_INTERNAL_API void grheap_roots_clear_for_reset(GRHEAP_Heap * heap);
+
+/* ---- relocate.c (only in a build made with RELOCATE=yes) ---------------- */
+
+#ifdef GRHEAP_RELOCATE
+/** The environment's default for relocation (`GRHEAP_RELOCATE=1`). */
+GRHEAP_INTERNAL_API bool grheap_env_relocate(void);
+
+/** After marking, weak processing and the dropping of dead IDs, before the
+ *  sweep: moves every unpinned object that no conservative range hit to a new
+ *  cell, rewrites every reference the collector was shown, and frees and
+ *  poisons the old cells. Allocates nothing that a failure could leave
+ *  half-done: a collection that cannot get its table moves nothing. */
+GRHEAP_INTERNAL_API void grheap_reloc_run(GRHEAP_Heap * heap);
+
+/** Marking: the object at (span, index) is held conservatively or pinned, so
+ *  it stays where it is. */
+GRHEAP_INTERNAL_API void grheap_reloc_stay(GRHEAP_Span * span, size_t index);
+
+/** A RELOCATE-mode tracer reports a slot (encoded: a codec word; else a raw
+ *  pointer): rewrites it to its target's new address. */
+GRHEAP_INTERNAL_API void grheap_reloc_slot(
+    GRHEAP_Tracer * tracer, void * slot, bool encoded);
+
+/** The new address of `object` if this collection moved it, else `object`. */
+GRHEAP_INTERNAL_API void * grheap_reloc_forward(
+    const GRHEAP_Heap * heap, const void * object);
+
+/** Re-addresses the ID table and rebuilds its address index. */
+GRHEAP_INTERNAL_API void grheap_ids_relocate(GRHEAP_Heap * heap);
+
+/** Re-addresses the weak registry. */
+GRHEAP_INTERNAL_API void grheap_weak_relocate(GRHEAP_Heap * heap);
+
+/** A traced slot was rewritten from `old_value` to `new_value`: if the shadow
+ *  holds `old_value` for it, it now holds `new_value`. */
+GRHEAP_INTERNAL_API void grheap_shadow_update(GRHEAP_Heap * heap, uintptr_t slot,
+    uint64_t old_value, uint64_t new_value);
+
+/** An object moved: every shadow entry whose slot lay in the old cell's
+ *  payload now names the same offset of the new one. */
+GRHEAP_INTERNAL_API void grheap_shadow_relocate_cell(GRHEAP_Heap * heap,
+    uintptr_t old_payload, uintptr_t new_payload, size_t bytes);
+#endif
 
 /* ---- digest.c --------------------------------------------------------- */
 

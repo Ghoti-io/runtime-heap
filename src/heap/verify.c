@@ -245,6 +245,35 @@ void grheap_shadow_forget_range(
   }
 }
 
+#ifdef GRHEAP_RELOCATE
+void grheap_shadow_update(GRHEAP_Heap * heap, uintptr_t slot,
+    uint64_t old_value, uint64_t new_value) {
+  GRHEAP_ShadowEntry * e = shadow_find(heap, slot);
+  if (e != NULL && e->value == old_value) {
+    e->value = new_value;
+  }
+}
+
+void grheap_shadow_relocate_cell(GRHEAP_Heap * heap, uintptr_t old_payload,
+    uintptr_t new_payload, size_t bytes) {
+#ifdef GRHEAP_PLANT_RELOC_SHADOW_STALE
+  (void)heap; (void)old_payload; (void)new_payload; (void)bytes;
+#else
+  if (heap->shadow_count == 0) {
+    return;
+  }
+  for (size_t off = 0; off + 8u <= bytes && heap->shadow_count != 0; off += 8u) {
+    GRHEAP_ShadowEntry * e = shadow_find(heap, old_payload + off);
+    if (e != NULL) {
+      uint64_t value = e->value;
+      shadow_remove(heap, e);
+      grheap_shadow_set(heap, new_payload + off, value);
+    }
+  }
+#endif
+}
+#endif
+
 void grheap_shadow_clear(GRHEAP_Heap * heap) {
   if (heap->shadow != NULL) {
     memset(heap->shadow, 0, heap->shadow_cap * sizeof *heap->shadow);

@@ -37,7 +37,8 @@
  * The order of a run (weak.c, id.c, verify.c, sweep.c):
  *
  *   verify walk -> mark roots -> ephemeron fixpoint -> clear weak slots
- *     -> drop dead IDs -> sweep (forget shadow, destroy, poison)
+ *     -> drop dead IDs -> [relocate: a build made with RELOCATE=yes, when it
+ *     is switched on] -> sweep (forget shadow, destroy, poison)
  *     -> `cleared` callbacks
  */
 
@@ -53,6 +54,11 @@ void grheap_collect_now(GRHEAP_Heap * heap) {
   grheap_mark(heap);
   grheap_weak_process(heap);
   grheap_ids_drop_dead(heap);
+#ifdef GRHEAP_RELOCATE
+  if (heap->relocate) {
+    grheap_reloc_run(heap);
+  }
+#endif
   grheap_sweep(heap);
   grheap_mark_stack_free(heap);
   heap->busy--;

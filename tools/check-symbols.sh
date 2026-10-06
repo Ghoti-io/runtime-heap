@@ -11,9 +11,13 @@
 #   - every header includes macros.h, uses this library's include-guard
 #     prefix, and shares its guard with no other header.
 #
-# Usage: check-symbols.sh <shared-library> <version-token> <root> [test-only-symbols]
+# Usage: check-symbols.sh <shared-library> <version-token> <root> [test-only-symbols] [relocate]
 #   [test-only-symbols] is a space-separated list of names that exist for the
 #   tests and must not be in the shipped library, even as a local symbol.
+#   [relocate] is yes for a build made with RELOCATE=yes. Only that build has
+#   the functions relocate.h declares, so a normal build's "declared but not
+#   exported" check leaves that one header out (it is not installed there
+#   either). Anything else is a normal build.
 #   <root> holds include/ and src/. The Makefile runs this against the real
 #   tree, and check-gates.sh runs the same script against tests/gates/symbols
 #   fixtures and small shared objects it builds, so that each check is seen
@@ -42,6 +46,7 @@ if [ -z "$exported" ]; then
 fi
 
 TESTONLY="${4:-}"
+RELOCATE="${5:-no}"
 
 cd "$ROOT" || exit 1
 
@@ -58,7 +63,13 @@ if [ -n "$unexported" ]; then
   exit 1
 fi
 
-missing="$(find include -name '*.h' -exec grep -h 'GRHEAP_API' {} + \
+if [ "$RELOCATE" = yes ]; then
+  skip_header='-name _none_'
+else
+  skip_header='-name relocate.h'
+fi
+# shellcheck disable=SC2086
+missing="$(find include -name '*.h' ! $skip_header -exec grep -h 'GRHEAP_API' {} + \
   | grep -oE 'grheap_[a-z0-9_]+\(' | tr -d '(' | sort -u \
   | while read -r f; do
       nm -D --defined-only "$LIB" | awk '{print $3}' | grep -qx "${TOKEN}_$f" || echo "$f"

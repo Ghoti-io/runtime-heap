@@ -456,6 +456,20 @@ void grheap_weak_run_cleared(GRHEAP_Heap * heap) {
   heap->busy--;
 }
 
+#ifdef GRHEAP_RELOCATE
+/* A moving collection: every registered cell is at its new address. (The slots
+ * inside the payloads are rewritten with the other precise slots.) */
+void grheap_weak_relocate(GRHEAP_Heap * heap) {
+#ifndef GRHEAP_PLANT_RELOC_WEAK_STALE
+  for (size_t e = 0; e < heap->nweak; e++) {
+    heap->weak[e].object = grheap_reloc_forward(heap, heap->weak[e].object);
+  }
+#else
+  (void)heap;
+#endif
+}
+#endif
+
 void grheap_weak_free(GRHEAP_Heap * heap) {
   if (heap->weak != NULL) {
     heap->allocator->free_fn(heap->allocator->ctx, heap->weak);

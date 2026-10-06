@@ -258,4 +258,40 @@ case "$reported" in
 esac
 pass "the library agrees with its .pc about the version"
 
+# ---------------------------------------------------------------------------
+# 8. relocate.h is installed exactly when the library has the mode.
+#
+# The relocation torture (relocate.h) is test-only: a build made with
+# RELOCATE=yes installs its header, and every other build installs neither the
+# header nor any code for it, and says so through grheap_relocation_available.
+# A header installed beside a library without the mode would declare functions
+# the library does not export; a library with the mode and no header could not
+# be driven. Both are caught by asking the installed library and then looking.
+# ---------------------------------------------------------------------------
+cat > "$work/available.c" <<'EOF'
+#include <ghoti.io/runtime-heap/runtime-heap.h>
+#include <stdio.h>
+int main(void) {
+  printf("%d\n", grheap_relocation_available() ? 1 : 0);
+  return 0;
+}
+EOF
+# shellcheck disable=SC2086
+$CC -std=c17 -Wall -Wextra -Werror -o "$work/available" "$work/available.c" \
+    $flags $rpath || fail "the availability probe did not compile or link"
+available="$("$work/available")"
+have_header=0
+for tok in $flags; do
+  case "$tok" in
+    -I*)
+      [ -f "${tok#-I}/ghoti.io/runtime-heap/relocate.h" ] && have_header=1
+      ;;
+  esac
+done
+if [ "$available" != "$have_header" ]; then
+  fail "the installed library says relocation is available=$available but relocate.h is installed=$have_header:
+  only a build made with RELOCATE=yes has the mode, and only it installs the header"
+fi
+pass "relocation: available=$available, and relocate.h is installed exactly then"
+
 printf '\n\033[0;32mThe installed library is consumable.\033[0m\n\n'

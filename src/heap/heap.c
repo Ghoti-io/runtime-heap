@@ -109,6 +109,9 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->auto_collect = options->auto_collect;
     heap->torture = options->torture;
     heap->verify = options->verify;
+#ifdef GRHEAP_RELOCATE
+    heap->relocate = options->relocate;
+#endif
   } else {
     heap->mode = GRHEAP_MODE_COLLECTED;
     grheap_value_codec_default(&heap->codec);
@@ -116,6 +119,9 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->auto_collect = true;
     heap->torture = grheap_env_torture();
     heap->verify = grheap_env_verify();
+#ifdef GRHEAP_RELOCATE
+    heap->relocate = grheap_env_relocate();
+#endif
   }
   heap->next_threshold = heap->threshold;
 

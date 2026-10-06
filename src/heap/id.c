@@ -256,6 +256,22 @@ void grheap_ids_drop_dead(GRHEAP_Heap * heap) {
   heap->stats.ids_live = kept;
 }
 
+#ifdef GRHEAP_RELOCATE
+/* A moving collection: every entry names its object's new address, and the
+ * index, which is keyed by address, is rebuilt (the dense array is keyed by ID
+ * and keeps its order). */
+void grheap_ids_relocate(GRHEAP_Heap * heap) {
+#ifndef GRHEAP_PLANT_RELOC_IDS_STALE
+  for (size_t i = 0; i < heap->nids; i++) {
+    heap->ids[i].object = grheap_reloc_forward(heap, heap->ids[i].object);
+  }
+#endif
+#ifndef GRHEAP_PLANT_RELOC_INDEX_STALE
+  index_rebuild(heap);
+#endif
+}
+#endif
+
 void grheap_ids_clear(GRHEAP_Heap * heap) {
   heap->nids = 0;
   if (heap->id_index_cap != 0) {

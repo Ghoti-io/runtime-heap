@@ -29,7 +29,7 @@ TEST_F(StoreTest, StoreWritesTheSlotAndCountsIt) {
 }
 
 TEST_F(StoreTest, AStoredPointerKeepsItsTargetAliveThroughTheHolder) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   Node * holder = new_node(w.heap, 1);
   Node * child = new_node(w.heap, 2);
   GRHEAP_Handle * h;

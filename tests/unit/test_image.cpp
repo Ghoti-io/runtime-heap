@@ -187,8 +187,10 @@ const GRHEAP_Type * resolve_nothing(void *, const char *) { return nullptr; }
 struct ImgWorld {
   RootBox box;
   HeapWorld w;
+  // Relocation is off in these worlds: the tests keep the nodes they build in C
+  // variables. (test_relocate.cpp runs an image through relocating heaps.)
   explicit ImgWorld(size_t slots, const WorldConfig & config = WorldConfig())
-      : w(config) {
+      : w(unmoved(config)) {
     box.words.assign(slots, 0);
     EXPECT_EQ(grcore_context_add_root_source(w.ctx, &kBoxSource, &box), GRCORE_OK);
   }

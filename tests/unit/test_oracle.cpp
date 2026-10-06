@@ -256,7 +256,7 @@ struct Oracle {
 };
 
 void run_oracle(const WorldConfig & config, uint64_t seed, int ops) {
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config));
   destroyed_log().clear();
   g_cleared = 0;
   {
@@ -352,7 +352,7 @@ TEST_F(OracleTest, TheSameSeedGivesTheSameSurvivorsWhateverTheInstruments) {
     WorldConfig config;
     config.torture = instruments ? 1 : 0;
     config.verify = instruments ? GRHEAP_VERIFY_COUNT : GRHEAP_VERIFY_OFF;
-    HeapWorld w(config);
+    HeapWorld w(unmoved(config));
     destroyed_log().clear();
     g_cleared = 0;
     std::vector<uint64_t> alive;

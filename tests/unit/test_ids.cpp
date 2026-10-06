@@ -27,7 +27,7 @@ class IdsTest : public ::testing::Test {
 };
 
 TEST_F(IdsTest, TheSameObjectGetsTheSameIdAndIdsIncreaseFromOne) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   Node * a = new_node(w.heap, 1);
   GRHEAP_Handle * ha = hold(w, a);
   Node * b = new_node(w.heap, 2);
@@ -46,7 +46,7 @@ TEST_F(IdsTest, TheSameObjectGetsTheSameIdAndIdsIncreaseFromOne) {
 }
 
 TEST_F(IdsTest, AnIdSurvivesCollectionsWhileItsObjectLivesAndResolvesBack) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   Node * a = new_node(w.heap, 1);
   GRHEAP_Handle * ha = hold(w, a);
   uint64_t id = 0;
@@ -108,7 +108,7 @@ TEST_F(IdsTest, TheIdIsForgottenBeforeTheDestroyHookRuns) {
 }
 
 TEST_F(IdsTest, TheIdentityHashIsAFunctionOfTheIdAndStable) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   Node * a = new_node(w.heap, 1);
   GRHEAP_Handle * ha = hold(w, a);
   Node * b = new_node(w.heap, 2);
@@ -144,7 +144,7 @@ TEST_F(IdsTest, TheIdentityHashIsAFunctionOfTheIdAndStable) {
 }
 
 TEST_F(IdsTest, ManyIdsAcrossGrowthAndCompactionStayConsistent) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   constexpr int kN = 3000;
   std::vector<GRHEAP_Handle *> hs(kN, nullptr);
   std::vector<Node *> objs(kN, nullptr);

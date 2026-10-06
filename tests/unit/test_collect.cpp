@@ -321,7 +321,7 @@ TEST_F(CollectTest, AThresholdOfZeroCollectsBeforeEveryAllocation) {
 TEST_F(CollectTest, AFreedCellIsReusedAndComesBackZeroFilled) {
   WorldConfig config;
   config.auto_collect = false;
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config)); // asserts which cell an allocation gets back
   // One survivor keeps the block alive, so the freed cell stays on its list
   // rather than going back to the provider with the block.
   Node * keep = new_node(w.heap, 1);

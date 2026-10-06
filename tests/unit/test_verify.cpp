@@ -71,7 +71,7 @@ TEST_F(VerifyTest, AStoreThroughTheFunctionsIsClean) {
 }
 
 TEST_F(VerifyTest, APointerWrittenDirectlyIsFoundByVerifyAndByTheNextCollection) {
-  HeapWorld w(verified());
+  HeapWorld w(unmoved(verified()));
   Node * a = new_node(w.heap, 1);
   Node * b = new_node(w.heap, 2);
   GRHEAP_Handle * ha;

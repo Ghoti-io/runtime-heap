@@ -152,7 +152,7 @@ class WeakTest : public ::testing::Test {
 };
 
 TEST_F(WeakTest, ADeadTargetClearsTheSlotAndTheCallbackRunsOnceAfterTheSweep) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -186,7 +186,7 @@ TEST_F(WeakTest, ADeadTargetClearsTheSlotAndTheCallbackRunsOnceAfterTheSweep) {
 }
 
 TEST_F(WeakTest, ALiveTargetKeepsTheSlotAndTheCallbackIsNotCalled) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -209,7 +209,7 @@ TEST_F(WeakTest, ALiveTargetKeepsTheSlotAndTheCallbackIsNotCalled) {
 }
 
 TEST_F(WeakTest, APinnedTargetStaysAndAnUnpinnedOneGoes) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -227,7 +227,7 @@ TEST_F(WeakTest, APinnedTargetStaysAndAnUnpinnedOneGoes) {
 }
 
 TEST_F(WeakTest, ATargetFoundByAConservativeRangeStays) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -271,7 +271,7 @@ TEST_F(WeakTest, ACellThatIsItselfDeadIsDroppedWithoutACallback) {
 }
 
 TEST_F(WeakTest, ACellWithNoCallbackStillClears) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   WeakCell * cell = new_cell(w, 10, &kQuietCell);
   GRHEAP_Handle * hc = hold(w, cell);
   Node * t = target(w, 1);
@@ -283,7 +283,7 @@ TEST_F(WeakTest, ACellWithNoCallbackStillClears) {
 }
 
 TEST_F(WeakTest, AnEphemeronKeepsItsValueWhileTheKeyIsReachableElsewhere) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   Eph * e = new_eph(w, 20);
   GRHEAP_Handle * he = hold(w, e);
@@ -313,7 +313,7 @@ TEST_F(WeakTest, AnEphemeronKeepsItsValueWhileTheKeyIsReachableElsewhere) {
 }
 
 TEST_F(WeakTest, AValueThatPointsBackAtItsKeyDoesNotKeepEitherAlive) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   Eph * e = new_eph(w, 20);
   GRHEAP_Handle * he = hold(w, e);
@@ -338,7 +338,7 @@ TEST_F(WeakTest, AValueThatPointsBackAtItsKeyDoesNotKeepEitherAlive) {
 }
 
 TEST_F(WeakTest, AChainOfEphemeronsIsFollowedToAFixpoint) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   // E[i].key = V[i], E[i].value = V[i+1]; V[0] is the only thing held. The
   // ephemerons are allocated last-link first, so the registry order is the
@@ -511,7 +511,7 @@ TEST_F(WeakTest, AnEncodedWeakCellDecodesItsWordAndLeavesAnIntegerAlone) {
   WorldConfig config;
   config.codec_set = true;
   config.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config));
   the_heap = w.heap;
   void * p;
   ASSERT_EQ(grheap_alloc(w.heap, &kWordCell, &p), GRHEAP_OK);
@@ -545,7 +545,7 @@ TEST_F(WeakTest, AnEphemeronWithAnIntegerKeyKeepsItsValue) {
   WorldConfig config;
   config.codec_set = true;
   config.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config));
   static const GRHEAP_Type word_eph = GRHEAP_TYPE_INIT("word-eph", 24, nullptr, nullptr,
       &kWordEphSpec, nullptr, nullptr);
   void * p;
@@ -564,7 +564,7 @@ TEST_F(WeakTest, AnEphemeronWithAnIntegerKeyKeepsItsValue) {
 }
 
 TEST_F(WeakTest, ASlotThatIsNotAPayloadStartIsCountedAndCleared) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -634,7 +634,7 @@ TEST_F(WeakTest, EphemeronSlotsThatAreInvalidOrHaveNoKeyAreCountedAndCleared) {
 TEST_F(WeakTest, BarrierVerifyWatchesTheEphemeronSlotsToo) {
   WorldConfig config;
   config.verify = GRHEAP_VERIFY_COUNT;
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config));
   Eph * e = new_eph(w, 20);
   GRHEAP_Handle * he = hold(w, e);
   Node * k = target(w, 1);
@@ -696,7 +696,7 @@ TEST_F(WeakTest, ASpecWhoseSlotsDoNotFitThePayloadIsRefusedAtAllocation) {
 }
 
 TEST_F(WeakTest, ManyCellsAreEachClearedAndReportedOnce) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   constexpr int kCells = 100; // past the registry's first growth
   GRHEAP_Handle * handles[kCells];
@@ -743,7 +743,7 @@ TEST_F(WeakTest, AnArenaAllocatesWeakCellsAndNeverClearsThem) {
 }
 
 TEST_F(WeakTest, ACollectionFromInsideTheCallbackIsRefusedAndTheHeapSurvives) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -761,7 +761,7 @@ TEST_F(WeakTest, ACollectionFromInsideTheCallbackIsRefusedAndTheHeapSurvives) {
 TEST_F(WeakTest, TheCollectorsClearsAreKnownToBarrierVerify) {
   WorldConfig config;
   config.verify = GRHEAP_VERIFY_COUNT;
-  HeapWorld w(config);
+  HeapWorld w(unmoved(config));
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);
@@ -854,7 +854,7 @@ TEST_F(WeakTest, EveryNthAllocatorFailureWhileMakingWeakCellsIsSurvived) {
 }
 
 TEST_F(WeakTest, TheRegistryAndTheCellsMigrateWithTheContext) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   GRHEAP_Handle * hc = hold(w, cell);

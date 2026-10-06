@@ -19,7 +19,7 @@ class ThreadsTest : public ::testing::Test {
 };
 
 TEST_F(ThreadsTest, AHeapAndItsHandlesPinsAndRootsMigrateWithTheContext) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   void * slot = nullptr;
   ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
   Node * rooted = new_node(w.heap, 1);
@@ -103,7 +103,7 @@ TEST_F(ThreadsTest, ManyHandOffsKeepTheHeapConsistent) {
 }
 
 TEST_F(ThreadsTest, ARootSourceIsAskedByWhicheverThreadOwnsTheContext) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   Node * n = new_node(w.heap, 1);
   uint64_t slot = addr(n);
   HeldRoots held;

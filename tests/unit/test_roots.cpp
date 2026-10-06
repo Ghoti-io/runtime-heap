@@ -16,7 +16,7 @@ class RootsTest : public ::testing::Test {
 };
 
 TEST_F(RootsTest, ARootSlotKeepsWhateverItHoldsAtCollectionTime) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   void * slot = nullptr;
   ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
   EXPECT_EQ(w.stats().roots, 1u);
@@ -133,7 +133,7 @@ TEST_F(RootsTest, HandlesRefuseWhatIsNotALivePayloadStartAndLeaveThingsAlone) {
 }
 
 TEST_F(RootsTest, HandlesAreDestroyedInAnyOrderAndTheRestKeepTheirObjects) {
-  HeapWorld w;
+  HeapWorld w(unmoved());
   std::vector<GRHEAP_Handle *> handles;
   std::vector<Node *> nodes;
   for (uint64_t i = 0; i < 5; i++) {

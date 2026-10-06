@@ -12,6 +12,9 @@
 #include <gtest/gtest.h>
 
 #include <ghoti.io/runtime-heap/runtime-heap.h>
+#ifdef GRHEAP_RELOCATE
+#include <ghoti.io/runtime-heap/relocate.h>
+#endif
 
 #include <ghoti.io/runtime-core/b/budget.h>
 #include <ghoti.io/runtime-core/b/context.h>
@@ -148,6 +151,10 @@ struct WorldConfig {
   // allocation, turns torture off here.
   int torture = -1;
   int verify = -1;
+  // The same for relocation (a build made with RELOCATE=yes; GRHEAP_RELOCATE
+  // in the environment). A test that holds an object in a C variable across a
+  // collection turns it off, as it does torture.
+  int relocate = -1;
 };
 
 /* `config` with torture off: for a test that asserts exactly when a collection
@@ -155,6 +162,17 @@ struct WorldConfig {
  * (which torture exists to catch). */
 inline WorldConfig steady(WorldConfig config = WorldConfig()) {
   config.torture = 0;
+  config.relocate = 0;
+  return config;
+}
+
+/* `config` with relocation off: for a test that keeps an address in a C
+ * variable across a collection and reads it afterwards, which relocation
+ * torture (a build made with RELOCATE=yes, GRHEAP_RELOCATE=1) turns stale on
+ * purpose. Nothing else about the world changes, so such a test still runs
+ * under torture and verify. */
+inline WorldConfig unmoved(WorldConfig config = WorldConfig()) {
+  config.relocate = 0;
   return config;
 }
 
@@ -195,6 +213,11 @@ struct HeapWorld {
       if (config.verify >= 0) {
         grheap_options_set_verify(h, static_cast<GRHEAP_Verify>(config.verify));
       }
+#ifdef GRHEAP_RELOCATE
+      if (config.relocate >= 0) {
+        grheap_options_set_relocate(h, config.relocate != 0);
+      }
+#endif
       EXPECT_EQ(grheap_heap_create(ctx, h, &heap), GRHEAP_OK);
       grheap_options_destroy(h);
     }

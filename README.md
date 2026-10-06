@@ -85,12 +85,13 @@ this library:
 | `test-torture` | the ASan+UBSan build, every unit test with `GRHEAP_TORTURE=1 GRHEAP_VERIFY=1` (a collection at every allocation, freed cells poisoned, every store checked) |
 | `coverage` | instrumented run and line report; `COVERAGE_MIN=80` fails below the floor |
 | `check-no-relocation` | fail if the shared library or the static archive of a normal build holds relocation code or a relocation symbol (the one allowed name is `grheap_relocation_available`); `check-gates` shows it failing on a build made with the option |
-| `check-relocation-gates`, `test-relocate` | with `RELOCATE=yes`: plant each relocation defect (an engine that reports a slot through a copy, a field `trace` omits, and eight in the library) and require it to be seen; run every unit test with `GRHEAP_RELOCATE=1` |
+| `check-relocation-gates`, `test-relocate` | with `RELOCATE=yes`: plant each relocation defect (an engine that reports a slot through a copy, a field `trace` omits, and eleven in the library, each caught by the one test named for it) and require it to be seen; run every unit test with `GRHEAP_RELOCATE=1` |
 
 ## The API
 
-All headers are in `include/ghoti.io/runtime-heap/`, all labelled `stable`:
-this is the C embedding API of the collector (AD-14). `runtime-heap.h` includes
+All headers are in `include/ghoti.io/runtime-heap/`, all labelled `stable` but
+`relocate.h`, which is `free` (the relocation torture exists only in a build
+made with `RELOCATE=yes`): this is the C embedding API of the collector (AD-14). `runtime-heap.h` includes
 them all and includes nothing from `runtime-core`'s A.
 
 | Header | Holds |
@@ -150,7 +151,10 @@ visited but not updated reads poison: `GRHEAP_RELOCATE=1`, or
 `grheap_options_set_relocate` from `relocate.h`, which only that build installs.
 It is a test mode, never in the shipped library: a normal build has no
 relocation code or symbol (`make check-no-relocation`), and says so through
-`grheap_relocation_available()`. See `documentation/design.md`.
+`grheap_relocation_available()`. See `documentation/design.md`, which also says
+what the extra tree costs (`check-gates` and the relocation gates each build a
+`RELOCATE=yes` tree, and a failure to build it fails the gate) and how to make
+the private prefix a consumer needs (never a shared one).
 
 **Budgets.** Pages and metadata are charged to the context. A collection runs
 when the bytes allocated since the last reach the threshold, once more when a

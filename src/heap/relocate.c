@@ -67,6 +67,8 @@
 
 #ifdef GRHEAP_RELOCATE
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /** The byte a freed cell is filled with, as the sweep's torture does. */
@@ -131,7 +133,11 @@ void grheap_reloc_slot(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
   if (to == (uintptr_t)address) {
     return;
   }
+#ifdef GRHEAP_PLANT_RELOC_ENCODE_STALE
+  uint64_t new_word = encoded ? old_word : (uint64_t)to;
+#else
   uint64_t new_word = encoded ? encode(heap, old_word, to) : (uint64_t)to;
+#endif
   memcpy(slot, &new_word, sizeof new_word);
   if (heap->verify != GRHEAP_VERIFY_OFF) {
     grheap_shadow_update(heap, (uintptr_t)slot, old_word, new_word);
@@ -219,8 +225,10 @@ static void copy_object(GRHEAP_Heap * heap, const GRHEAP_RelocMove * m) {
       !grheap_locate(heap, m->to, true, &ns, &ni)) {
     return; /* cannot happen: both cells were located when they were chosen */
   }
+#ifndef GRHEAP_PLANT_RELOC_COPY_SKIP
   memcpy((unsigned char *)(uintptr_t)m->to - GRHEAP_HEADER_BYTES,
       (unsigned char *)(uintptr_t)m->from - GRHEAP_HEADER_BYTES, os->cell);
+#endif
   grheap_bit_set(ns->mark, ni);
   heap->reloc_stats.moved++;
   heap->reloc_stats.moved_bytes += os->cell;
@@ -289,13 +297,25 @@ void grheap_reloc_run(GRHEAP_Heap * heap) {
   for (size_t i = 0; i < heap->nroots; i++) {
     *heap->roots[i] = grheap_reloc_forward(heap, *heap->roots[i]);
   }
+#endif
+#ifndef GRHEAP_PLANT_RELOC_HANDLE_STALE
   for (struct GRHEAP_Handle * h = heap->handles; h != NULL; h = h->next) {
     h->object = grheap_reloc_forward(heap, h->object);
   }
 #endif
 #ifndef GRHEAP_PLANT_RELOC_SOURCE_STALE
   GRCORE_RootVisitor visitor = {heap, visit_root_slot, NULL};
-  grcore_context_enumerate_roots(heap->context, &visitor);
+  /* It refuses only a caller that does not own the context, and a collection
+   * runs on the owner, so this cannot fail. If it ever did, the sources' slots
+   * would be left naming the old cells while the objects had moved: a half
+   * rewritten heap is worse than a stop, and this mode exists only to be
+   * stopped by what it finds, so it stops. */
+  if (grcore_context_enumerate_roots(heap->context, &visitor) != GRCORE_OK) {
+    fprintf(stderr,
+        "runtime-heap relocation: the root sources could not be enumerated; "
+        "the heap is half rewritten, so the process stops\n");
+    abort();
+  }
 #endif
   for (size_t i = 0; i < heap->nspans; i++) {
     GRHEAP_Span * s = heap->spans[i];

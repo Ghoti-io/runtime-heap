@@ -927,11 +927,15 @@ when it is pointed at a heap without the mode.
 **Seen to fail.** `make check-relocation-gates` builds two small programs twice
 (a slot reported through a copy, and a field `trace` omits; the planted build
 fails under `GRHEAP_RELOCATE=1` naming the poisoned read, passes without it, and
-the control passes under it), and the library itself eight times, each with one
-table or slot kind left un-updated (`GRHEAP_PLANT_RELOC_ROOT_STALE`,
-`_SOURCE_STALE`, `_WEAK_STALE`, `_WEAKSLOT_STALE`, `_IDS_STALE`, `_INDEX_STALE`,
-`_SHADOW_STALE`, `_MOVE_PINNED`), each of which must fail
-`tests/unit/test_relocate.cpp` while the control passes it. `make test-relocate`
+the control passes under it), and the library itself eleven times, each with one
+table, slot kind or step left undone (`GRHEAP_PLANT_RELOC_ROOT_STALE`,
+`_HANDLE_STALE`, `_SOURCE_STALE`, `_ENCODE_STALE` (the codec word's rewrite),
+`_COPY_SKIP` (the copy of the cell), `_WEAK_STALE`, `_WEAKSLOT_STALE`,
+`_IDS_STALE`, `_INDEX_STALE`, `_SHADOW_STALE`, `_MOVE_PINNED`). Each has a test
+of its own in `tests/unit/test_relocate.cpp`, run alone, and must fail on its
+own assertions (or die while it is the test that runs); a failure of any other
+test, or a build that failed, does not count as catching it. The control passes
+the whole suite. `make test-relocate`
 runs every unit test with the mode on, and `make test-torture` under a
 relocating build is a collection and a move at every allocation under ASan+UBSan
 with barrier-verify. A test that keeps an address in a C variable across a
@@ -958,10 +962,40 @@ collection (which is what the mode makes stale) opts its world out with
   and the property to prove is that the shipped collector does not move
   anything. A separate build can be inspected for absence; a flag cannot.
 
-Limits, stated: an old *large* object's mapping is unmapped, so a stale read of
-it faults (loud) rather than reading `0xDD`; a stale address whose block is
-unmapped because every cell moved out of it does the same; and the mode finds
-only a reference the program reads after the move.
+Limits, stated:
+
+- An old *large* object's mapping is unmapped, so a stale read of it faults
+  (loud) rather than reading `0xDD`. So does a stale address whose block was
+  unmapped because every cell moved out of it.
+- The mode finds only a reference the program reads after the move.
+- It skips a collection that runs while a restore is pending (between a restore's
+  apply and its commit), because the restore holds the addresses of the objects
+  it made. That guard has no test of its own here: a collection in that window
+  needs another key's restore to allocate in this heap, and the public API of
+  this library alone cannot make one. It is covered by lang-tang's snapshot tests
+  passing under its relocation arm, whose engine does exactly that.
+
+**Cost, and the extra tree.** A build with the option has its own tree and a
+second compile of every source. `make check-gates` and the relocation gates need
+the artifacts of *both* builds, so each runs a nested `make RELOCATE=no all` and
+`make RELOCATE=yes all` (the second is a full build of the library in
+`build/<os>/<build>-reloc`, a few tens of seconds), and `check-relocation-gates`
+builds the library again for each of its eleven plants. A nested build that
+fails fails the gate; nothing is skipped. `make test` of a normal build runs
+`check-gates`, so it pays for the extra tree too.
+
+**The private prefix a consumer needs.** A relocation build is installed beside
+nothing: its package name is the normal one, so it must never go into a shared
+prefix (the workspace's `.local/`, or `/usr/local`), where it would replace the
+heap every consumer links. Make a prefix of its own, say `.local-<work>-reloc/`,
+with an `OWNER` file whose first line says who holds it, what for and until when
+(`./status.sh` lists it), holding runtime-heap's dependencies installed beside it
+(cutil and runtime-core, and for lang-tang also unicode, text, regex, chron,
+ctang, runtime-jit and runtime-debug: copy a prefix that has them and rewrite its
+`.pc` `prefix` lines, or install each library into it). Then `make install
+RELOCATE=yes PREFIX=<that prefix>` in `libs/runtime-heap`, and point the
+consumer's `RELOCATE_PREFIX` (and `PKG_CONFIG_PATH`) at it. Delete the prefix when
+the work finishes.
 
 ## CI
 

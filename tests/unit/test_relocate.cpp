@@ -441,6 +441,169 @@ TEST_F(RelocateTest, WeakCellsEphemeronsAndIdsAllNameTheNewAddressAndADeadRefere
   }
 }
 
+/* ---- One reference kind each --------------------------------------------
+ *
+ * check-relocation-gates plants one library defect at a time (one table or slot
+ * kind left un-updated) and requires the test named for it to fail, so each
+ * kind has a test of its own that says nothing else. */
+
+TEST_F(RelocateTest, ARegisteredRootSlotNamesTheNewAddress) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  void * slot = a;
+  ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_NE(slot, static_cast<void *>(a));
+  EXPECT_TRUE(grheap_contains(w.heap, slot));
+  ASSERT_EQ(grheap_root_remove(w.heap, &slot), GRHEAP_OK);
+}
+
+TEST_F(RelocateTest, AHandleNamesTheNewAddress) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  GRHEAP_Handle * handle = nullptr;
+  ASSERT_EQ(grheap_handle_create(w.heap, a, &handle), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_NE(grheap_handle_get(handle), static_cast<void *>(a));
+  EXPECT_TRUE(grheap_contains(w.heap, grheap_handle_get(handle)));
+  ASSERT_EQ(grheap_handle_destroy(handle), GRHEAP_OK);
+}
+
+TEST_F(RelocateTest, ARootSourceSlotNamesTheNewAddress) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  uint64_t word = addr(a);
+  HeldRoots held;
+  held.slots = {&word};
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kHeldSource, &held), GRCORE_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_NE(word, addr(a));
+  EXPECT_TRUE(grheap_contains(w.heap, reinterpret_cast<void *>(word)));
+}
+
+TEST_F(RelocateTest, ACodecWordSlotKeepsItsTagAndNamesTheNewAddress) {
+  WorldConfig c = moving();
+  c.codec_set = true;
+  c.codec = GRHEAP_ValueCodec{1, 1, ~UINT64_C(1), 1, 0};
+  HeapWorld w(c);
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  uint64_t word = (addr(a) << 1) | 1u;
+  HeldRoots held;
+  held.slots = {&word};
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kHeldSource, &held), GRCORE_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(word & 1u, 1u);
+  EXPECT_NE(word, (addr(a) << 1) | 1u);
+  EXPECT_TRUE(grheap_contains(w.heap, reinterpret_cast<void *>(word >> 1)));
+}
+
+TEST_F(RelocateTest, AMovedObjectsContentsAreCopiedToItsNewCell) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 0x1234567, &kPlainNode);
+  void * slot = a;
+  ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  ASSERT_NE(slot, static_cast<void *>(a));
+  EXPECT_EQ(static_cast<Node *>(slot)->id, 0x1234567u);
+  ASSERT_EQ(grheap_root_remove(w.heap, &slot), GRHEAP_OK);
+}
+
+TEST_F(RelocateTest, AWeakSlotAndAnEphemeronsSlotsNameTheNewAddresses) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * live = new_node(w.heap, 1, &kPlainNode);
+  Node * key = new_node(w.heap, 2, &kPlainNode);
+  Node * value = new_node(w.heap, 3, &kPlainNode);
+  void * hp = nullptr;
+  ASSERT_EQ(grheap_alloc(w.heap, &kHolder, &hp), GRHEAP_OK);
+  static_cast<WeakHolder *>(hp)->target = live;
+  void * pp = nullptr;
+  ASSERT_EQ(grheap_alloc(w.heap, &kPair, &pp), GRHEAP_OK);
+  static_cast<Pair *>(pp)->key = key;
+  static_cast<Pair *>(pp)->value = value;
+  void * roots[4] = {hp, pp, live, key};
+  for (void *& r : roots) {
+    ASSERT_EQ(grheap_root_add(w.heap, &r), GRHEAP_OK);
+  }
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(static_cast<WeakHolder *>(roots[0])->target, roots[2]);
+  EXPECT_EQ(static_cast<Pair *>(roots[1])->key, roots[3]);
+  EXPECT_TRUE(grheap_contains(w.heap, static_cast<Pair *>(roots[1])->value));
+  for (void *& r : roots) {
+    ASSERT_EQ(grheap_root_remove(w.heap, &r), GRHEAP_OK);
+  }
+}
+
+TEST_F(RelocateTest, TheWeakRegistryNamesTheNewAddressOfACell) {
+  g_cleared.clear();
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * target = new_node(w.heap, 1, &kPlainNode);
+  void * hp = nullptr;
+  ASSERT_EQ(grheap_alloc(w.heap, &kHolder, &hp), GRHEAP_OK);
+  auto * holder = static_cast<WeakHolder *>(hp);
+  holder->id = 77;
+  holder->target = target;
+  void * tslot = target;
+  void * hslot = hp;
+  ASSERT_EQ(grheap_root_add(w.heap, &tslot), GRHEAP_OK);
+  ASSERT_EQ(grheap_root_add(w.heap, &hslot), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK); // the cell moves
+  ASSERT_NE(hslot, hp);
+  tslot = nullptr; // the target dies at the next collection
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  // The registry found the cell where it now is, cleared its slot and told it.
+  ASSERT_EQ(g_cleared.size(), 1u);
+  EXPECT_EQ(g_cleared[0].second, 77u);
+  ASSERT_EQ(grheap_root_remove(w.heap, &tslot), GRHEAP_OK);
+  ASSERT_EQ(grheap_root_remove(w.heap, &hslot), GRHEAP_OK);
+}
+
+TEST_F(RelocateTest, AnIdResolvesToTheNewAddressOfItsObject) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  void * slot = a;
+  ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
+  uint64_t id = 0;
+  ASSERT_EQ(grheap_id_of(w.heap, a, &id), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  void * back = nullptr;
+  ASSERT_EQ(grheap_object_of_id(w.heap, id, &back), GRHEAP_OK);
+  EXPECT_EQ(back, slot);
+  ASSERT_EQ(grheap_root_remove(w.heap, &slot), GRHEAP_OK);
+}
+
+TEST_F(RelocateTest, TheIdIndexFindsAnObjectAtItsNewAddress) {
+  HeapWorld w(moving());
+  void * keeper = pinned_keeper(w);
+  (void)keeper;
+  Node * a = new_node(w.heap, 1, &kPlainNode);
+  void * slot = a;
+  ASSERT_EQ(grheap_root_add(w.heap, &slot), GRHEAP_OK);
+  uint64_t id = 0;
+  ASSERT_EQ(grheap_id_of(w.heap, a, &id), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  uint64_t again = 0;
+  ASSERT_EQ(grheap_id_of(w.heap, slot, &again), GRHEAP_OK);
+  EXPECT_EQ(again, id);
+  EXPECT_EQ(w.stats().ids_issued, 1u) << "no second ID was issued";
+  ASSERT_EQ(grheap_root_remove(w.heap, &slot), GRHEAP_OK);
+}
+
 /* ---- Barrier-verify ------------------------------------------------------ */
 
 TEST_F(RelocateTest, TheBarrierVerifyShadowFollowsAMovedObjectAndItsSlots) {

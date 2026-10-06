@@ -18,7 +18,8 @@
 #
 #   Library plants (GRHEAP_PLANT_RELOC_*, in src/heap): the library itself is
 #   built, one defect at a time, with a table or slot kind left un-updated, and
-#   the unit tests that exist for it (tests/unit/test_relocate.cpp) must fail.
+#   the one unit test named for it (tests/unit/test_relocate.cpp) must fail on its
+#   own assertions, or die while it is the test that runs.
 #   The control build must pass the same tests, so that a test which fails for
 #   any reason does not count. A plant that does not reach the build (a
 #   misspelt macro) passes the test and so fails this gate.
@@ -130,10 +131,13 @@ if build stale_untraced control && build stale_untraced planted -DPLANT_UNTRACED
   expect 'control, relocation on: passes' zero ''
 fi
 
-# plant <macro> <test filter>: the library built with <macro>, and the tests
-# that must catch it.
+# lib_plant <macro> <test>: the library built with <macro>, and the one test
+# that is named for it, which must fail ON ITS OWN: the output must name that
+# test as FAILED, or the program must have died (a signal) while that test was
+# the one running. A failure of any other test, or a build that failed, does not
+# count, and the filter runs that test alone so nothing else can answer for it.
 lib_plant() {
-  macro="$1"; filter="$2"
+  macro="$1"; test_name="$2"
   tree="./build/plant-$macro"
   checks=$((checks + 1))
   if ! (cd "$ROOT" && $MAKE --no-print-directory RELOCATE=yes BUILD_DIR="$tree" \
@@ -143,12 +147,17 @@ $(tail -20 "$work/$macro.log")"
     return
   fi
   out="$( (cd "$ROOT" && env -u GRHEAP_TORTURE -u GRHEAP_VERIFY -u GRHEAP_RELOCATE \
-      "$tree/apps/testRelocate$EXE" --gtest_filter="$filter" --gtest_brief=1) 2>&1)"
+      "$tree/apps/testRelocate$EXE" --gtest_filter="RelocateTest.$test_name") 2>&1)"
   rc=$?
+  last_run="$(printf '%s\n' "$out" | grep '^\[ RUN ' | tail -1)"
   if [ "$rc" -eq 0 ]; then
-    fail "the library built with $macro passed $filter: the defect was not seen"
+    fail "the library built with $macro passed $test_name: the defect was not seen"
+  elif printf '%s\n' "$out" | grep -q "^\[  FAILED  \] RelocateTest\.$test_name"; then
+    printf '  ok   %s: %s fails its own assertions\n' "$macro" "$test_name"
+  elif [ "$rc" -ge 128 ] && printf '%s' "$last_run" | grep -q "RelocateTest\.$test_name"; then
+    printf '  ok   %s: %s dies (signal %d) while it is the test that runs\n' "$macro" "$test_name" "$((rc - 128))"
   else
-    printf '  ok   %s: %s fails\n' "$macro" "$filter"
+    fail "the library built with $macro failed, but not in $test_name (exit $rc, last test started: $last_run)"
   fi
 }
 
@@ -172,14 +181,17 @@ $(tail -20 "$work/control.log")"
 fi
 
 printf 'library defects, each planted alone\n'
-lib_plant GRHEAP_PLANT_RELOC_ROOT_STALE '*HeldByARootSlot*'
-lib_plant GRHEAP_PLANT_RELOC_SOURCE_STALE '*HeldByARootSlot*'
-lib_plant GRHEAP_PLANT_RELOC_WEAK_STALE '*WeakCellsEphemerons*'
-lib_plant GRHEAP_PLANT_RELOC_WEAKSLOT_STALE '*WeakCellsEphemerons*'
-lib_plant GRHEAP_PLANT_RELOC_IDS_STALE '*WeakCellsEphemerons*'
-lib_plant GRHEAP_PLANT_RELOC_INDEX_STALE '*WeakCellsEphemerons*'
-lib_plant GRHEAP_PLANT_RELOC_SHADOW_STALE '*BarrierVerifyShadow*'
-lib_plant GRHEAP_PLANT_RELOC_MOVE_PINNED '*PinnedObject*'
+lib_plant GRHEAP_PLANT_RELOC_ROOT_STALE ARegisteredRootSlotNamesTheNewAddress
+lib_plant GRHEAP_PLANT_RELOC_HANDLE_STALE AHandleNamesTheNewAddress
+lib_plant GRHEAP_PLANT_RELOC_SOURCE_STALE ARootSourceSlotNamesTheNewAddress
+lib_plant GRHEAP_PLANT_RELOC_ENCODE_STALE ACodecWordSlotKeepsItsTagAndNamesTheNewAddress
+lib_plant GRHEAP_PLANT_RELOC_COPY_SKIP AMovedObjectsContentsAreCopiedToItsNewCell
+lib_plant GRHEAP_PLANT_RELOC_WEAK_STALE TheWeakRegistryNamesTheNewAddressOfACell
+lib_plant GRHEAP_PLANT_RELOC_WEAKSLOT_STALE AWeakSlotAndAnEphemeronsSlotsNameTheNewAddresses
+lib_plant GRHEAP_PLANT_RELOC_IDS_STALE AnIdResolvesToTheNewAddressOfItsObject
+lib_plant GRHEAP_PLANT_RELOC_INDEX_STALE TheIdIndexFindsAnObjectAtItsNewAddress
+lib_plant GRHEAP_PLANT_RELOC_SHADOW_STALE TheBarrierVerifyShadowFollowsAMovedObjectAndItsSlots
+lib_plant GRHEAP_PLANT_RELOC_MOVE_PINNED APinnedObjectAndAConservativelyHeldObjectKeepTheirAddressAndOthersMove
 
 if [ "$failures" -ne 0 ]; then
   printf 'check-relocation-gates: %d of %d checks failed\n' "$failures" "$checks" >&2

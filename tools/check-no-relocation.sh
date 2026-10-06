@@ -44,8 +44,11 @@ if [ "$#" -eq 0 ]; then
   exit 1
 fi
 
-# The name of the query, which both modes ignore.
-ALLOWED='grheap_relocation_available'
+# The name of the query, which both modes ignore: the whole name, with the
+# library's version token in front of it or not, and nothing else around it. A
+# longer name that merely contains it (grheap_relocation_available_helper) is
+# relocation code like any other.
+ALLOWED='(^|[^A-Za-z0-9_])(ghotiio_[A-Za-z0-9_]*_)?grheap_relocation_available([^A-Za-z0-9_]|$)'
 
 status=0
 for f in "$@"; do
@@ -64,9 +67,9 @@ for f in "$@"; do
     status=1
     continue
   fi
-  names="$(printf '%s\n' "$syms" | grep -i 'reloc' | grep -v "$ALLOWED" || true)"
+  names="$(printf '%s\n' "$syms" | grep -i 'reloc' | grep -vE "$ALLOWED" || true)"
   strs="$(strings -a "$f" | grep -E 'GRHEAP_RELOC|relocate\.c|grheap_reloc|GRHEAP_PLANT_RELOC' \
-    | grep -v "$ALLOWED" || true)"
+    | grep -vE "$ALLOWED" || true)"
   case "$MODE" in
     --absent)
       if [ -n "$names" ] || [ -n "$strs" ]; then

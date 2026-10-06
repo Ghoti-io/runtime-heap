@@ -20,7 +20,7 @@
 
 /**
  * @file relocate.h
- * @stability stable
+ * @stability free
  *
  * Relocation torture: a test-only mode that moves objects at every collection.
  *

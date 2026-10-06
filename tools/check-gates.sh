@@ -93,6 +93,8 @@ expect_fail 'labels/planted-prose-only' 'top.h has no @stability' \
   "$L" "$FIX/labels/planted-prose-only"
 expect_fail 'labels/planted-free' 'top.h is labelled free' \
   "$L" "$FIX/labels/planted-free"
+expect_fail 'labels/planted-relocate-stable' 'relocate.h is labelled stable but this header must be free' \
+  "$L" "$FIX/labels/planted-relocate-stable"
 expect_fail 'labels/planted-two-labels' 'more than one @stability' \
   "$L" "$FIX/labels/planted-two-labels"
 expect_fail 'labels/empty' 'measuring nothing' "$L" "$work/empty"
@@ -316,6 +318,14 @@ else
       "$N" --absent "$work/sneak.so"
   else
     fail "could not build the query fixtures"
+  fi
+  # A name that merely contains the query's is not the query.
+  printf 'int ghotiio_runtime_heap_0_grheap_relocation_available(void) { return 0; }\nint ghotiio_runtime_heap_0_grheap_x(void) { return 1; }\nint ghotiio_runtime_heap_0_grheap_relocation_available_helper(void) { return 2; }\n' > "$work/near.c"
+  if $CC -shared -fPIC -o "$work/near.so" "$work/near.c" 2>/dev/null; then
+    expect_fail 'relocation/planted: a near-miss of the query'"'"'s name' 'grheap_relocation_available_helper' \
+      "$N" --absent "$work/near.so"
+  else
+    fail "could not build the near-miss fixture"
   fi
   # check-symbols leaves relocate.h out of a normal build only.
   Y="$HERE/check-symbols.sh"

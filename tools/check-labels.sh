@@ -9,7 +9,10 @@
 #     @stability stable
 #
 # This library's whole public surface is the C embedding API of the collector
-# (AD-14, AD-11), so every header is `stable`. There is no a/ or b/ split to
+# (AD-14, AD-11), so every header is `stable`, with one exception: relocate.h
+# exists only in a build made with RELOCATE=yes (a test-only mode that is not
+# part of the API a consumer can count on), so it is `free`, and is required to
+# be. There is no a/ or b/ split to
 # choose a label by directory, as in runtime-core: the headers are flat, and a
 # `free` one here would quietly promise less than the spine says. A header
 # that needs the other label is a decision to take on purpose, and this gate
@@ -45,6 +48,9 @@ count=0
 for h in $headers; do
   count=$((count + 1))
   want=stable
+  case "$h" in
+    */relocate.h) want=free ;;
+  esac
   # Anchored to a comment line so that prose mentioning the tag does not count
   # as carrying it.
   labels="$(grep -E '^[[:space:]]*(\*|//)[[:space:]]*@stability[[:space:]]' "$h" \
@@ -69,7 +75,7 @@ for h in $headers; do
       ;;
   esac
   if [ "$labels" != "$want" ]; then
-    printf 'check-labels: %s is labelled %s but every header here must be %s\n' \
+    printf 'check-labels: %s is labelled %s but this header must be %s\n' \
       "$h" "$labels" "$want" >&2
     status=1
   fi
@@ -78,5 +84,5 @@ done
 if [ "$status" -ne 0 ]; then
   exit 1
 fi
-printf 'check-labels: %d public headers, each labelled stable\n' \
+printf 'check-labels: %d public headers, each labelled as it must be (stable, and free for the test-only relocate.h)\n' \
   "$count"

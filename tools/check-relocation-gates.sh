@@ -31,6 +31,13 @@
 #   Run from the project root by `make check-relocation-gates`, which supplies
 #   in the environment: MAKE, CC, CFLAGS, INCLUDE, LIBS (the link line) and
 #   LD_LIBRARY_PATH, and passes PREFIX to the sub-makes through MAKEFLAGS.
+#
+#   For a build made for another machine, GRHEAP_GATE_RUNNER is the command that
+#   runs one of its programs (for arm64 under qemu-user, `qemu-aarch64 -L
+#   /usr/aarch64-linux-gnu`): every fixture and every test program the gate runs
+#   is run through it, and the gate's own claims (a planted defect fails, its
+#   control passes) are checked on that machine's code. Unset, programs run
+#   directly, as before.
 
 set -u
 
@@ -42,6 +49,9 @@ case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) EXE=.exe ;;
   *) EXE= ;;
 esac
+
+# The runner of programs built for another machine, or nothing.
+RUNNER="${GRHEAP_GATE_RUNNER:-}"
 
 work="$(mktemp -d)"
 cleanup() {
@@ -87,8 +97,9 @@ $(cat "$work/$name-$which.log")"
 run() {
   bin="$1$EXE"; reloc="$2"
   # shellcheck disable=SC2086
+  # shellcheck disable=SC2086
   out="$( (env -u GRHEAP_TORTURE -u GRHEAP_VERIFY -u GRHEAP_RELOCATE \
-      ${reloc:+GRHEAP_RELOCATE=$reloc} "$bin") 2>&1)"
+      ${reloc:+GRHEAP_RELOCATE=$reloc} $RUNNER "$bin") 2>&1)"
   rc=$?
 }
 
@@ -146,8 +157,9 @@ lib_plant() {
 $(tail -20 "$work/$macro.log")"
     return
   fi
+  # shellcheck disable=SC2086
   out="$( (cd "$ROOT" && env -u GRHEAP_TORTURE -u GRHEAP_VERIFY -u GRHEAP_RELOCATE \
-      "$tree/apps/testRelocate$EXE" --gtest_filter="RelocateTest.$test_name") 2>&1)"
+      $RUNNER "$tree/apps/testRelocate$EXE" --gtest_filter="RelocateTest.$test_name") 2>&1)"
   rc=$?
   last_run="$(printf '%s\n' "$out" | grep '^\[ RUN ' | tail -1)"
   if [ "$rc" -eq 0 ]; then
@@ -166,8 +178,9 @@ checks=$((checks + 1))
 control="./build/plant-control"
 if (cd "$ROOT" && $MAKE --no-print-directory RELOCATE=yes BUILD_DIR="$control" \
     "$control/apps/testRelocate$EXE") >"$work/control.log" 2>&1; then
+  # shellcheck disable=SC2086
   out="$( (cd "$ROOT" && env -u GRHEAP_TORTURE -u GRHEAP_VERIFY -u GRHEAP_RELOCATE \
-      "$control/apps/testRelocate$EXE" --gtest_brief=1) 2>&1)"
+      $RUNNER "$control/apps/testRelocate$EXE" --gtest_brief=1) 2>&1)"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     fail "the control library fails its own relocation tests:

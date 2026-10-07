@@ -97,7 +97,6 @@ $(cat "$work/$name-$which.log")"
 run() {
   bin="$1$EXE"; reloc="$2"
   # shellcheck disable=SC2086
-  # shellcheck disable=SC2086
   out="$( (env -u GRHEAP_TORTURE -u GRHEAP_VERIFY -u GRHEAP_RELOCATE \
       ${reloc:+GRHEAP_RELOCATE=$reloc} $RUNNER "$bin") 2>&1)"
   rc=$?

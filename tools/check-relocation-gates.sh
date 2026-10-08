@@ -167,6 +167,11 @@ $(tail -20 "$work/$macro.log")"
     printf '  ok   %s: %s fails its own assertions\n' "$macro" "$test_name"
   elif [ "$rc" -ge 128 ] && printf '%s' "$last_run" | grep -q "RelocateTest\.$test_name"; then
     printf '  ok   %s: %s dies (signal %d) while it is the test that runs\n' "$macro" "$test_name" "$((rc - 128))"
+  elif [ -n "$EXE" ] && [ "$rc" -eq 5 ] && printf '%s' "$last_run" | grep -q "RelocateTest\.$test_name"; then
+    # A Windows process that dies of an access violation exits with STATUS_ACCESS_VIOLATION
+    # (0xC0000005), whose low byte is what a shell reports: 5. A planted stale address is read
+    # through here as a fault, not as an assertion, which is the same verdict as a signal.
+    printf '  ok   %s: %s dies (access violation) while it is the test that runs\n' "$macro" "$test_name"
   else
     fail "the library built with $macro failed, but not in $test_name (exit $rc, last test started: $last_run)"
   fi

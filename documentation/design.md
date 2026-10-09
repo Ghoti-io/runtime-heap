@@ -997,6 +997,57 @@ RELOCATE=yes PREFIX=<that prefix>` in `libs/runtime-heap`, and point the
 consumer's `RELOCATE_PREFIX` (and `PKG_CONFIG_PATH`) at it. Delete the prefix when
 the work finishes.
 
+## Calls (AD-28, CAP-2, CAP-10 of the calls spec)
+
+Calls as deoptimization exits were milestone 1's defect (Corey, 2026-10-05): a
+compiled function left compiled code at every call, which made call-heavy code slower
+with the JIT than without it and, as a side effect, meant a collection never found
+more than one compiled frame. Compiled functions now call each other, so a collection
+can be inside a chain fifty or five thousand frames deep, each frame holding
+references in registers and frame slots that a stack map names. The call protocol is
+`runtime-jit`'s ("Calls between compiled functions"), the walk of the chain is
+`runtime-core`'s ("A, part 5"), and the engine's side is lang-tang's; this section is
+this library's part and is only that.
+
+**What the collector does with a chain.** Nothing of its own. It asks the core for the
+precise roots of every frame, compiled or not, treats each stack-map slot as a root
+source exactly as it treats a guest frame's slots, and under relocation torture
+(above) rewrites each slot in place in the old cell before the copy. A compiled frame
+has no conservative range: AD-17 makes JIT frames precise, which is also what makes a
+move legal under them. The chain adds no mark rule, no barrier case and no root kind.
+
+**What proves it.** The relocation torture moves every unpinned object at every GC
+point, and the compiled call is itself a GC point (the push of the callee's guest
+frame, and the call site's stack map). `runtime-jit` does not depend on this library, so the proof is
+lang-tang's: with the relocation build, its `testJit_calls` and `testNative_calls`
+(a chain of sixty and of five thousand compiled frames, references in padded frames,
+the arguments of a native called from compiled code) run under it, and `make
+test-relocate` of lang-tang is the arm. A reference left
+out of a stack map is caught by the torture without relocation (the missing-root
+gate); a reference that is visited and not updated is caught only with it, by a read
+of poisoned memory. lang-tang's planted defects 15, 20 and 27 are the second kind,
+and `check-planted-relocate` shows each caught with relocation and passing with
+torture alone, so the move, not the collection, is the instrument.
+
+**Rejected.**
+
+- *Scanning compiled frames conservatively.* It would keep a missed stack-map entry
+  alive and hide it, pin every object a chain touches so that nothing under a call
+  could move, and make the relocation torture prove nothing about the frames it most
+  needs to prove something about. AD-17 forbids it.
+- *Updating a compiled frame's references through a side table the collector keeps.*
+  A second source of truth for where references are, which can disagree with the
+  stack map the debugger and the frame differential read.
+- *Teaching the heap the compiled frame layout.* It is the core's walk and the code
+  metadata's format; the heap sees a slot to read and write and a codec.
+- *Calls as deopt exits,* the defect, as a way to keep chains short: it removes the
+  chain by removing the speed, and the property to prove would still be unproved on
+  the first engine that did not do it.
+
+Cost: none beyond the relocation build's own. The shipped collector contains no
+relocation code; the call-heavy figures are lang-tang's ("Calls, measured"), and this
+library's benchmarks, below, are unchanged by calls.
+
 ## CI
 
 `.github/workflows/ci.yml` runs the jobs AD-16 names for `gc`: both compilers

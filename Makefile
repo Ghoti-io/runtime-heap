@@ -218,8 +218,12 @@ ifeq ($(filter-out $(DEPLESS_GOALS),$(or $(MAKECMDGOALS),all)),)
 SKIP_DEP_CHECK := 1
 endif
 
-# The name carries $(BRANCH). ghoti.io-cutil never matches the installed file.
-CUTIL_PC ?= ghoti.io-cutil$(BRANCH)
+# Dependencies remain on their current major while this library's branch may
+# advance independently. Preserve the debug suffix and allow explicit overrides.
+DEPENDENCY_RELEASE_BRANCH := $(patsubst %-debug,%,$(BRANCH))
+DEPENDENCY_BUILD_SUFFIX := $(if $(filter %-debug,$(BRANCH)),-debug,)
+CUTIL_BRANCH ?= $(if $(filter -dev,$(DEPENDENCY_RELEASE_BRANCH)),-dev,-0)$(DEPENDENCY_BUILD_SUFFIX)
+CUTIL_PC ?= ghoti.io-cutil$(CUTIL_BRANCH)
 CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
 CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
 ifeq ($(strip $(CUTIL_CFLAGS)),)
@@ -232,7 +236,8 @@ INCLUDE += $(CUTIL_CFLAGS)
 # runtime-core: the contexts, the page provider and the root sources this heap
 # is attached to. Found the same way, by pkg-config alone and with the same
 # branch suffix, and a hard error when it is missing.
-RTCORE_PC ?= ghoti.io-runtime-core$(BRANCH)
+RTCORE_BRANCH ?= $(if $(filter -dev,$(DEPENDENCY_RELEASE_BRANCH)),-dev,-0)$(DEPENDENCY_BUILD_SUFFIX)
+RTCORE_PC ?= ghoti.io-runtime-core$(RTCORE_BRANCH)
 RTCORE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(RTCORE_PC) 2>/dev/null)
 RTCORE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(RTCORE_PC) 2>/dev/null)
 ifeq ($(strip $(RTCORE_CFLAGS)),)
@@ -591,11 +596,15 @@ else
 	@printf 'check-symbols: skipped (Linux only)\n'
 endif
 
-test: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) $(BENCH_EXECUTABLES) $(TEST_GATES) ## Build and run the tests
+.PHONY: check-gtest-full
+check-gtest-full: ## Prove full-suite selection and zero-test rejection
+	@tools/run-gtest-full.sh --selftest
+
+test: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) $(BENCH_EXECUTABLES) $(TEST_GATES) check-gtest-full ## Build and run the tests
 	@for test_exe in $(TEST_EXECUTABLES); do \
 		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
 		printf '\n### Running %s ###\n\n' "$$test_name"; \
-		LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$test_exe --gtest_brief=1 || exit 1; \
+		LD_LIBRARY_PATH="$(TEST_LD_PATH)" tools/run-gtest-full.sh $$test_exe || exit 1; \
 	done
 	@if [ -z "$(strip $(BENCH_EXECUTABLES))" ]; then \
 		printf 'test: no benchmark harness under bench/ (AD-26 requires one)\n' >&2; exit 1; \
@@ -613,7 +622,7 @@ test-relocate: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) ## Run every unit test w
 ifeq ($(RELOCATE),yes)
 	@for test_exe in $(TEST_EXECUTABLES); do \
 		printf '\n### Relocating %s ###\n\n' "$$(basename $$test_exe)"; \
-		GRHEAP_RELOCATE=1 LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$test_exe --gtest_brief=1 || exit 1; \
+		GRHEAP_RELOCATE=1 LD_LIBRARY_PATH="$(TEST_LD_PATH)" tools/run-gtest-full.sh $$test_exe || exit 1; \
 	done
 	@printf '\nRelocating suite clean.\n'
 else
@@ -625,7 +634,7 @@ test-quiet: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) ## Run tests, one line per 
 	printf '\n%-30s %8s %10s %s\n' "Test Suite" "Tests" "Time" "Status"; \
 	for test_exe in $(TEST_EXECUTABLES); do \
 		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
-		output=$$(LD_LIBRARY_PATH="$(TEST_LD_PATH)" $$test_exe --gtest_brief=1 2>&1); \
+		output=$$(LD_LIBRARY_PATH="$(TEST_LD_PATH)" tools/run-gtest-full.sh $$test_exe 2>&1); \
 		exit_code=$$?; \
 		num_tests=$$(echo "$$output" | grep -oP '\[\s*=+\s*\]\s*\K\d+(?=\s+tests?)' | head -1); \
 		time_ms=$$(echo "$$output" | grep -oP '\(\K\d+(?=\s*ms\s*total\))' | head -1); \
@@ -659,7 +668,7 @@ test-valgrind: $(APP_DIR)/$(TARGET) $(TEST_EXECUTABLES) ## Run the tests under V
 ifeq ($(OS_NAME), Linux)
 	@for test_exe in $(TEST_EXECUTABLES); do \
 		printf '\n### Valgrind %s ###\n\n' "$$(basename $$test_exe)"; \
-		LD_LIBRARY_PATH="$(TEST_LD_PATH)" valgrind $(VALGRIND_FLAGS) $$test_exe --gtest_brief=1 || exit 1; \
+		LD_LIBRARY_PATH="$(TEST_LD_PATH)" tools/run-gtest-full.sh valgrind $(VALGRIND_FLAGS) $$test_exe || exit 1; \
 	done
 else
 	@printf 'Valgrind is only available on Linux\n' >&2; exit 1
@@ -671,7 +680,7 @@ ifeq ($(OS_NAME), Linux)
 	printf '\n%-30s %8s %10s %s\n' "Test Suite (Valgrind)" "Tests" "Time" "Status"; \
 	for test_exe in $(TEST_EXECUTABLES); do \
 		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
-		output=$$(LD_LIBRARY_PATH="$(TEST_LD_PATH)" valgrind $(VALGRIND_FLAGS) $$test_exe --gtest_brief=1 2>&1); \
+		output=$$(LD_LIBRARY_PATH="$(TEST_LD_PATH)" tools/run-gtest-full.sh valgrind $(VALGRIND_FLAGS) $$test_exe 2>&1); \
 		exit_code=$$?; \
 		num_tests=$$(echo "$$output" | grep -oP '\[\s*=+\s*\]\s*\K\d+(?=\s+tests?)' | head -1); \
 		time_ms=$$(echo "$$output" | grep -oP '\(\K\d+(?=\s*ms\s*total\))' | head -1); \
@@ -760,7 +769,7 @@ $(foreach pair,$(TEST_PAIRS),\
 	$(eval $(call asan-test-executable-rule,$(word 1,$(subst |, ,$(pair))),$(word 2,$(subst |, ,$(pair))))))
 
 ASAN_TEST_EXECUTABLES := $(addprefix $(ASAN_APP_DIR)/,$(addsuffix $(EXE_EXTENSION),$(TEST_NAMES)))
-ASAN_RUNTIME := $(shell $(CC) -print-file-name=libasan.so 2>/dev/null)
+ASAN_RUNTIME := $(shell $(CXX) -print-file-name=libasan.so 2>/dev/null)
 # How the sanitized test programs are started. GCC's runtime is a shared
 # libasan.so, which has to be preloaded because the libraries under test are
 # loaded by a program that was not linked against it. clang links its own
@@ -769,10 +778,10 @@ ASAN_RUNTIME := $(shell $(CC) -print-file-name=libasan.so 2>/dev/null)
 # anything else (this workstation's desktop sets LD_PRELOAD), makes the runtime
 # abort with "ASan runtime does not come first". So with clang the preload is
 # emptied instead of set.
-ifneq ($(findstring clang,$(shell $(CC) --version 2>/dev/null)),)
-ASAN_PRELOAD = LD_PRELOAD=
+ifneq ($(findstring clang,$(shell $(CXX) --version 2>/dev/null)),)
+ASAN_PRELOAD = GTEST_FULL_TEST_LD_PRELOAD= LD_PRELOAD=
 else
-ASAN_PRELOAD = LD_PRELOAD="$(ASAN_RUNTIME)$${LD_PRELOAD:+:$$LD_PRELOAD}"
+ASAN_PRELOAD = GTEST_FULL_TEST_LD_PRELOAD="$(ASAN_RUNTIME)$${LD_PRELOAD:+:$$LD_PRELOAD}" LD_PRELOAD=
 endif
 
 test-asan: $(ASAN_TEST_EXECUTABLES) ## Build with ASan+UBSan and run the tests
@@ -780,7 +789,7 @@ test-asan: $(ASAN_TEST_EXECUTABLES) ## Build with ASan+UBSan and run the tests
 		printf '\n### ASan+UBSan %s ###\n\n' "$$(basename $$test_exe)"; \
 		$(ASAN_PRELOAD) \
 		LD_LIBRARY_PATH="$(ASAN_APP_DIR):$(LIB_INSTALL_PATH)/$(SUITE)" \
-			$$test_exe --gtest_brief=1 || exit 1; \
+			tools/run-gtest-full.sh $$test_exe || exit 1; \
 	done
 	@printf '\nASan+UBSan suite clean.\n'
 
@@ -798,7 +807,7 @@ test-torture: $(ASAN_TEST_EXECUTABLES) ## ASan+UBSan build, every unit test with
 		GRHEAP_TORTURE=1 GRHEAP_VERIFY=1 $(if $(filter yes,$(RELOCATE)),GRHEAP_RELOCATE=1) \
 		$(ASAN_PRELOAD) \
 		LD_LIBRARY_PATH="$(ASAN_APP_DIR):$(LIB_INSTALL_PATH)/$(SUITE)" \
-			$$test_exe --gtest_brief=1 || exit 1; \
+			tools/run-gtest-full.sh $$test_exe || exit 1; \
 	done
 	@printf '\nTorture + verify suite clean.\n'
 
@@ -867,7 +876,7 @@ test-tsan: $(TSAN_TEST_EXECUTABLES) ## Build with TSan and run the tests (Linux 
 ifeq ($(OS_NAME), Linux)
 	@for test_exe in $(TSAN_TEST_EXECUTABLES); do \
 		printf '\n### TSan %s ###\n\n' "$$(basename $$test_exe)"; \
-		$(TSAN_RUN_ENV) $$test_exe --gtest_brief=1 || exit 1; \
+		$(TSAN_RUN_ENV) tools/run-gtest-full.sh $$test_exe || exit 1; \
 	done
 	@printf '\nTSan suite clean.\n'
 else

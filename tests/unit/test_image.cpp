@@ -1290,7 +1290,9 @@ TEST_F(ImageTest, ACollectionBetweenTheHeapsApplyAndItsCommitKeepsWhatApplyMade)
   ImgWorld dst(src.box.words.size(), config);
   AllocatingKey dst_key{dst.w.heap};
   ASSERT_EQ(grcore_context_register(dst.w.ctx, &kAllocatingKey, &dst_key), GRCORE_OK);
-  ASSERT_EQ(grcore_context_restore(dst.w.ctx, snap, &renv), GRCORE_OK);
+  GRCORE_Result restored = grcore_context_restore(dst.w.ctx, snap, &renv);
+  grcore_snapshot_release(snap);
+  ASSERT_EQ(restored, GRCORE_OK);
   EXPECT_EQ(dst_key.allocated, 3) << "the control: the second key did allocate";
   EXPECT_GT(dst.w.stats().collections, 0u) << "the control: torture collected";
   EXPECT_EQ(compare(dst, m, true), "");

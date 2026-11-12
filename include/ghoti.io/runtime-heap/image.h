@@ -22,8 +22,8 @@
  * @file image.h
  * @stability stable
  *
- * Heap images: a frozen, shareable copy of the objects a context can reach
- * (AD-11, AD-12; the spine's Reserved Seams, context snapshots).
+ * Heap images: a frozen, shareable copy of the objects a context can reach,
+ * and what a context snapshot carries for the heap.
  *
  * An image is *data about objects*, not a copy of memory. It holds, for every
  * object reachable from the context's root sources, the type's *name*, the

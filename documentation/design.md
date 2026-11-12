@@ -2,9 +2,10 @@
 
 **Status:** In progress. Describes what exists: a precise, non-moving,
 stop-the-world mark and sweep collector attached to a `runtime-core` context,
-with `gc_store`, registered roots, handles, pins and an arena mode, taken from
-the runtime stack's architecture spine (AD-2, AD-3, AD-11, AD-12, AD-13, AD-14,
-AD-16 to AD-21, AD-26), with weak cells, ephemerons, stable IDs and an identity
+with `gc_store`, registered roots, handles, pins and an arena mode, built to the
+runtime stack's architecture decisions (AD-2, AD-3, AD-11, AD-12, AD-13, AD-14,
+AD-16 to AD-21, AD-26; each is stated here where this library relies on it),
+with weak cells, ephemerons, stable IDs and an identity
 hash, the two verification instruments (GC torture and barrier-verify), the
 barrier contract, CI, heap images (the heap's half of context snapshots), the
 retention query and the relocation torture, a test-only mode that moves every
@@ -55,8 +56,8 @@ already lets the service be called instead (the ACT handler).
 
 ## Why mark and sweep, and not copying or reference counting
 
-The spine says the first implementation does not move (AD-11), and designs for
-moving anyway. A mark-sweep heap is the smallest thing that satisfies the
+The stack's design says the first implementation does not move (AD-11), and
+designs for moving anyway. A mark-sweep heap is the smallest thing that satisfies the
 contract: precise tracing from described objects, conservative scanning of
 ranges a root source supplies, pinning, and a stable address.
 
@@ -282,7 +283,7 @@ calls, which is what makes a hand-off free of data races under ThreadSanitizer
 
 A returned object is the heap's: a caller never frees one. The pointer
 `grheap_alloc` returns is borrowed, valid until a collection finds the object
-unreachable (CONVENTIONS.md section 13).
+unreachable.
 
 ## Teardown
 
@@ -674,9 +675,9 @@ ID.
 
 A heap image (`image.h`) is the heap's half of a context snapshot: the objects
 a context's roots reach, frozen in a form that holds no address, so that many
-contexts can start from the same warmed-up heap. The spine reserves the seam
-(AD-12: nothing is keyed by address; Reserved Seams: "no host pointer stored in
-a heap"), and CAP-11 is what it is for.
+contexts can start from the same warmed-up heap. The stack's design reserves
+the seam (AD-12: nothing is keyed by address, and no host pointer is stored in
+a heap), and context snapshots are what it is for.
 
 **What an image is.** *Data about objects*, not memory. For each object
 reachable from the roots a context's sources report: its type's *name*, its
@@ -957,8 +958,8 @@ collection (which is what the mode makes stale) opts its world out with
 - *A real compacting collector.* It would be the right way to ship a moving
   collector, and it is a different project: it needs a read of every
   conservative pin, a policy for large objects, a plan for the image and the
-  snapshot, and a justification in a benchmark. The spine does not ask for it,
-  and a test mode needs only the property that moves are *possible*.
+  snapshot, and a justification in a benchmark. Nothing in the stack's design asks
+  for it, and a test mode needs only the property that moves are *possible*.
 - *Relocating only the roots.* It would move the registered roots and handles and
   skip the objects' own slots; but a field an engine reports through a copy is
   the defect worth finding, and it lives inside objects.
@@ -991,10 +992,9 @@ fails fails the gate; nothing is skipped. `make test` of a normal build runs
 
 **The private prefix a consumer needs.** A relocation build is installed beside
 nothing: its package name is the normal one, so it must never go into a shared
-prefix (the workspace's `.local/`, or `/usr/local`), where it would replace the
-heap every consumer links. Make a prefix of its own, say `.local-<work>-reloc/`,
-with an `OWNER` file whose first line says who holds it, what for and until when
-(`./status.sh` lists it), holding runtime-heap's dependencies installed beside it
+prefix (the one the other libraries are installed into, or `/usr/local`), where
+it would replace the heap every consumer links. Make a prefix of its own, say
+`<work>-reloc/`, holding runtime-heap's dependencies installed beside it
 (cutil and runtime-core, and for lang-tang also unicode, text, regex, chron,
 ctang, runtime-jit and runtime-debug: copy a prefix that has them and rewrite its
 `.pc` `prefix` lines, or install each library into it). Then `make install
@@ -1059,7 +1059,7 @@ library's benchmarks, below, are unchanged by calls.
 (with install and a consumer), ASan+UBSan, TSan, Valgrind, the torture modes
 (`make test-torture` and `make check-dynamic-gates`), a coverage floor of 80, and
 Windows under MSYS2. The setup action builds cutil and `runtime-core` into one
-prefix in the workspace, the way `bootstrap.sh` does. It is the same shape as
+prefix, in dependency order. It is the same shape as
 `runtime-core`'s and `compress`'s. It cannot be run from here, and it has not
 been run: it was checked only for being valid YAML that names these jobs.
 

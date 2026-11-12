@@ -1366,6 +1366,47 @@ TEST_F(ImageTest, ACollectionBetweenTheHeapsApplyAndItsCommitKeepsWhatApplyMade)
   EXPECT_EQ(compare(dst, m, true), "");
 }
 
+/* The loader's structural checks are the whole of what it knows about a blob: every
+ * byte of a small image is flipped three ways and the result restored into a fresh
+ * heap. Whatever the answer, it is an answer: no read or write outside the image or
+ * the heap (the sanitizer arms are what see it), no crash, no hang. A hostile blob
+ * can still mean something wrong to a type (image.h says a type's own `restore`
+ * checks what its payload means), which is a different question from this one. */
+TEST_F(ImageTest, EveryByteOfAnImageFlippedIsRefusedOrRestoredAndNeverMisread) {
+  ImgWorld src(3);
+  Model m;
+  build(src, m, 77, 6, 3);
+  for (size_t i = 0; i < 3; i++) {  // stable IDs, so the table is in the image
+    uint64_t id;
+    ASSERT_EQ(grheap_id_of(src.w.heap, reinterpret_cast<void *>(src.box.words[i]), &id), GRHEAP_OK);
+  }
+  Taken t;
+  ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+  const size_t size = grheap_image_size(t.image);
+  auto * bytes = static_cast<unsigned char *>(const_cast<void *>(grheap_image_bytes(t.image, nullptr)));
+  size_t ok = 0, refused = 0;
+  for (size_t at = 0; at < size; at++) {
+    const unsigned char original = bytes[at];
+    for (unsigned char changed : {static_cast<unsigned char>(original ^ 0xFF), static_cast<unsigned char>(0),
+             static_cast<unsigned char>(original ^ 0x01)}) {
+      if (changed == original) continue;
+      bytes[at] = changed;
+      ImgWorld dst(src.box.words.size());
+      GRHEAP_RestoreEnv env = env_with();
+      GRHEAP_Result r = grheap_image_instantiate(dst.w.heap, t.image, &env);
+      (r == GRHEAP_OK ? ok : refused)++;
+      EXPECT_TRUE(r == GRHEAP_OK || r == GRHEAP_ERR_CORRUPT || r == GRHEAP_ERR_INVALID ||
+          r == GRHEAP_ERR_OOM || r == GRHEAP_ERR_LIMIT) << "byte " << at << ": " << r;
+      if (r != GRHEAP_OK) {
+        EXPECT_EQ(dst.w.stats().live_objects, 0u) << "a refused image left objects behind: byte " << at;
+      }
+      bytes[at] = original;
+    }
+  }
+  EXPECT_GT(refused, 0u) << "the control: flipping bytes must be able to make an image refused";
+  EXPECT_GT(ok, 0u) << "the control: a flip in padding or a payload word is still a valid image";
+}
+
 TEST_F(ImageTest, TheHeapKeyCarriesTheImageInsideAContextSnapshot) {
   ImgWorld src(1);
   Model m;

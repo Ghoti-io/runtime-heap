@@ -907,6 +907,11 @@ bool grheap_restore_env_valid(const GRHEAP_RestoreEnv * env) {
 /* Checks the image against the heap, without changing anything but the
  * transient arrays it returns: the codec, the resolved types, every record's
  * bounds. `*out_types` is `ntypes` resolved types on success. */
+static int compare_u64(const void * a, const void * b) {
+  uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+  return x < y ? -1 : x > y;
+}
+
 static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     const GRHEAP_RestoreEnv * env, bool whole_heap, const GRHEAP_Type *** out_types) {
   if (!grheap_usable(heap) || heap->busy != 0 ||
@@ -979,6 +984,30 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     ImgRoot root = view_root(v, i);
     if (root.target_plus1 > v->h.nobjects) {
       r = GRHEAP_ERR_CORRUPT;
+    }
+  }
+  /* A stable ID names one object: two objects with the same one would make
+   * grheap_object_of_id answer with either. */
+  if (r == GRHEAP_OK && v->h.nobjects > 1) {
+    uint64_t * ids = heap->allocator->malloc_fn(
+        heap->allocator->ctx, (size_t)v->h.nobjects * sizeof *ids);
+    if (ids == NULL) {
+      r = grheap_failure(heap, refusals);
+    } else {
+      size_t n = 0;
+      for (size_t i = 0; i < v->h.nobjects; i++) {
+        uint64_t id = view_object(v, i).id;
+        if (id != 0) {
+          ids[n++] = id;
+        }
+      }
+      qsort(ids, n, sizeof *ids, compare_u64);
+      for (size_t i = 1; i < n && r == GRHEAP_OK; i++) {
+        if (ids[i] == ids[i - 1]) {
+          r = GRHEAP_ERR_CORRUPT;
+        }
+      }
+      heap->allocator->free_fn(heap->allocator->ctx, ids);
     }
   }
   if (r != GRHEAP_OK) {

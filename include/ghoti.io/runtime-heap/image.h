@@ -40,6 +40,16 @@
  * collector is correct for an image; the one new duty is naming what is not
  * heap. The image is an in-memory object; a byte format or a file is not done.
  *
+ * **What a restore trusts.** The bytes are checked structurally before anything
+ * is read through them: every offset, count and index is in bounds, a type name
+ * resolves, no two objects share a stable ID, and a refused image leaves the heap
+ * as it was (a test flips every byte of an image three ways, and the sanitizer
+ * arms run it). What the bytes *mean* to a type is the type's: a payload word a
+ * type's `trace` or `restore` assumes holds a pointer, a length or an enum is not
+ * checked here, and a type whose code relies on more than its own `restore` hook
+ * verifies must not be restored from a source that is not the one that took the
+ * image.
+ *
  * **What refuses a take.** Each is ::GRHEAP_ERR_INVALID, and nothing changes:
  * a registered root slot (a C pointer the heap cannot rewrite), a handle, a
  * pin, a weak cell or an ephemeron in the heap (any object whose type has a

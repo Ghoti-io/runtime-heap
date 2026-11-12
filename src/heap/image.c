@@ -847,6 +847,14 @@ struct GRHEAP_Pending {
   bool prepared;
 };
 
+size_t grheap_pending_count(const GRHEAP_Heap * heap) {
+  return heap->pending == NULL ? 0 : heap->pending->count;
+}
+
+void * grheap_pending_object(const GRHEAP_Heap * heap, size_t index) {
+  return heap->pending->addrs[index];
+}
+
 static void pending_destroy(GRHEAP_Heap * heap, GRHEAP_Pending * p) {
   if (p == NULL) {
     return;

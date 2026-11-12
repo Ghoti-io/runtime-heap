@@ -556,6 +556,10 @@ GRHEAP_INTERNAL_API void grheap_image_trace(
 
 /** Frees a restore that was never settled (the heap's destruction). */
 GRHEAP_INTERNAL_API void grheap_pending_free(GRHEAP_Heap * heap);
+/** The objects a restore has made and not yet rooted (between the heap's APPLY
+ *  and its COMMIT or ABANDON), which are held only by the restore. */
+GRHEAP_INTERNAL_API size_t grheap_pending_count(const GRHEAP_Heap * heap);
+GRHEAP_INTERNAL_API void * grheap_pending_object(const GRHEAP_Heap * heap, size_t index);
 
 /** The heap key's snapshot hooks (core's types; the heap has one blob). */
 GRHEAP_INTERNAL_API GRCORE_Result grheap_key_snapshot(

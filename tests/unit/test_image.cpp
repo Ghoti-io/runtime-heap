@@ -1234,6 +1234,68 @@ TEST_F(ImageTest, OneImageRestoredConcurrentlyIntoHeapsOnManyThreads) {
 
 /* ---- the heap's key hooks, inside a context snapshot --------------------------------------------- */
 
+/* A second key, registered after the heap's, whose APPLY allocates in the heap:
+ * design.md says a restore does that. The heap's APPLY has made its objects by
+ * then and holds them only in the restore's pending list until COMMIT writes
+ * the roots, so a collection in between must keep them. */
+struct AllocatingKey {
+  GRHEAP_Heap * heap = nullptr;
+  int allocated = 0;
+};
+GRCORE_Result alloc_key_snapshot(GRCORE_Context *, void *, GRCORE_SnapshotWriter * w) {
+  return grcore_snapshot_writer_u64(w, 3);
+}
+GRCORE_Result alloc_key_restore(GRCORE_Context *, void * value,
+    GRCORE_SnapshotReader * r, void *, GRCORE_RestoreMode mode) {
+  uint64_t n = 0;
+  GRCORE_Result res = grcore_snapshot_reader_u64(r, &n);
+  if (res != GRCORE_OK || mode == GRCORE_RESTORE_CHECK) {
+    return res;
+  }
+  auto * k = static_cast<AllocatingKey *>(value);
+  for (uint64_t i = 0; i < n; i++) {
+    void * p = nullptr;
+    if (grheap_alloc(k->heap, &kEmptyObject, &p) != GRHEAP_OK) {
+      return GRCORE_ERR_OOM;
+    }
+    k->allocated++;
+  }
+  return GRCORE_OK;
+}
+GRCORE_Result alloc_key_settle(GRCORE_Context *, void *, void *, GRCORE_SettleMode) {
+  return GRCORE_OK;
+}
+const GRCORE_Key kAllocatingKey = GRCORE_KEY_INIT("allocating-after-heap",
+    GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr, nullptr, alloc_key_snapshot,
+    alloc_key_restore, alloc_key_settle);
+
+TEST_F(ImageTest, ACollectionBetweenTheHeapsApplyAndItsCommitKeepsWhatApplyMade) {
+  ImgWorld src(1);
+  Model m;
+  build(src, m, 17, 25, 3);
+  AllocatingKey src_key{src.w.heap};
+  ASSERT_EQ(grcore_context_register(src.w.ctx, &kAllocatingKey, &src_key), GRCORE_OK);
+  GRCORE_Snapshot * snap = nullptr;
+  ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &snap), GRCORE_OK);
+  ASSERT_EQ(grcore_snapshot_blob_count(snap), 2u);
+
+  GRHEAP_RestoreEnv env = env_with();
+  GRCORE_RestoreEnv renv = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
+  renv.user = &env;
+  renv.lookup = [](void * u, const char * name) -> void * {
+    return std::strcmp(name, GRHEAP_SNAPSHOT_KEY_NAME) == 0 ? u : nullptr;
+  };
+  WorldConfig config;
+  config.torture = 1; // a collection at every allocation
+  ImgWorld dst(src.box.words.size(), config);
+  AllocatingKey dst_key{dst.w.heap};
+  ASSERT_EQ(grcore_context_register(dst.w.ctx, &kAllocatingKey, &dst_key), GRCORE_OK);
+  ASSERT_EQ(grcore_context_restore(dst.w.ctx, snap, &renv), GRCORE_OK);
+  EXPECT_EQ(dst_key.allocated, 3) << "the control: the second key did allocate";
+  EXPECT_GT(dst.w.stats().collections, 0u) << "the control: torture collected";
+  EXPECT_EQ(compare(dst, m, true), "");
+}
+
 TEST_F(ImageTest, TheHeapKeyCarriesTheImageInsideAContextSnapshot) {
   ImgWorld src(1);
   Model m;

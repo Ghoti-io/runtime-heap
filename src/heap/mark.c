@@ -324,6 +324,14 @@ void grheap_mark(GRHEAP_Heap * heap) {
   grheap_mark_pinned(heap);
   finish(heap);
 
+  /* A restore between the heap's APPLY and its COMMIT holds what it made only
+   * in its own list: another key's APPLY may allocate here and collect, and the
+   * root slots that will name these objects are not written until COMMIT. */
+  for (size_t i = 0, n = grheap_pending_count(heap); i < n; i++) {
+    mark_precise(heap, (uint64_t)(uintptr_t)grheap_pending_object(heap, i));
+  }
+  finish(heap);
+
   GRCORE_RootVisitor visitor = {heap, visit_slot, visit_range};
   grcore_context_enumerate_roots(heap->context, &visitor);
   finish(heap);

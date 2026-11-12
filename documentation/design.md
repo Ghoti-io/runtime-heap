@@ -976,10 +976,11 @@ Limits, stated:
 - The mode finds only a reference the program reads after the move.
 - It skips a collection that runs while a restore is pending (between a restore's
   apply and its commit), because the restore holds the addresses of the objects
-  it made. That guard has no test of its own here: a collection in that window
-  needs another key's restore to allocate in this heap, and the public API of
-  this library alone cannot make one. It is covered by lang-tang's snapshot tests
-  passing under its relocation arm, whose engine does exactly that.
+  it made. A collection in that window keeps them: the mark treats the objects a
+  pending restore has made as roots until its commit or abandon, and
+  `test_image.cpp` restores through a second key whose apply allocates in this
+  heap under torture. The relocation arm of that window is covered by lang-tang's
+  snapshot tests passing under it, whose engine does exactly that.
 
 **Cost, and the extra tree.** A build with the option has its own tree and a
 second compile of every source. `make check-gates` and the relocation gates need

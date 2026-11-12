@@ -131,6 +131,10 @@ typedef struct GRHEAP_Stats {
   uint64_t ephemerons_cleared; ///< Ephemerons a collection cleared.
   uint64_t ids_issued;        ///< Stable IDs ever assigned.
   uint64_t ids_live;          ///< Stable IDs whose object is still alive.
+  uint64_t verify_skipped;    ///< Collections whose barrier-verify walk was skipped
+                              ///< because the shadow table could not grow: a verify
+                              ///< run that finishes with this above zero checked less
+                              ///< than it claims.
 } GRHEAP_Stats;
 
 /**

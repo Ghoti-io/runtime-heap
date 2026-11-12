@@ -240,6 +240,28 @@ const GRHEAP_Type kOwner = GRHEAP_TYPE_INIT("owner", sizeof(Owner), owner_trace,
 
 } // namespace
 
+/* The holder of a store must contain the slot in its payload: the cell is
+ * rounded up to its size class, and a store into the slack past the payload is
+ * not inside the holder. */
+namespace {
+const GRHEAP_Type kOneWord = GRHEAP_TYPE_INIT("one-word", 8, nullptr, nullptr, nullptr, nullptr, nullptr);
+}
+TEST_F(VerifyTest, AStoreIntoTheSlackPastAPayloadIsNotInsideTheHolder) {
+  HeapWorld w(verified());
+  void * holder;
+  ASSERT_EQ(grheap_alloc(w.heap, &kOneWord, &holder), GRHEAP_OK);
+  Node * target = new_node(w.heap, 1);
+  GRHEAP_Handle * h;
+  ASSERT_EQ(grheap_handle_create(w.heap, target, &h), GRHEAP_OK);
+  const uint64_t before = w.stats().verify_violations;
+  void ** inside = static_cast<void **>(holder);
+  ASSERT_EQ(grheap_store(w.heap, holder, inside, target), GRHEAP_OK);
+  EXPECT_EQ(w.stats().verify_violations, before) << "the control: the payload's own word";
+  void ** slack = reinterpret_cast<void **>(static_cast<unsigned char *>(holder) + 8);
+  ASSERT_EQ(grheap_store(w.heap, holder, slack, target), GRHEAP_OK);
+  EXPECT_GT(w.stats().verify_violations, before) << "the slack past the payload passed as inside";
+}
+
 TEST_F(VerifyTest, ADeadObjectsShadowOutsideItsCellIsForgottenWithIt) {
   // The object's trace reports slots in a buffer it owns, outside its cell. A
   // store into one with the object as holder is itself a violation ("the slot
@@ -445,6 +467,9 @@ TEST_F(VerifyTest, AShadowThatCouldNotGrowIsReportedAndStoresStillWork) {
   // A collection does not abort or count false violations either.
   ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
   EXPECT_EQ(w.stats().verify_violations, 0u);
+  // The instrument is off for the rest of the heap's life, and the collection
+  // says it did not run it: a verify run that stays green cannot hide this.
+  EXPECT_EQ(w.stats().verify_skipped, 1u);
 }
 
 TEST_F(VerifyTest, RefusesNullAndNonOwnersAndACallFromInsideATrace) {

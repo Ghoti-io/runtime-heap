@@ -396,7 +396,10 @@ void grheap_verify_store(GRHEAP_Heap * heap, const void * holder,
           0);
     } else {
       htype = grheap_header((void *)hpayload)->type;
-      if (first < hpayload || last + 8u > hend) {
+      /* The payload's own size, not the class-rounded cell: a store into the
+       * slack past the payload is not inside the holder. */
+      uintptr_t hbytes = (uintptr_t)grheap_header((void *)hpayload)->size;
+      if (first < hpayload || last + 8u > hpayload + hbytes) {
         violation(heap, htype, (void *)hpayload,
             "the slot is not inside the holder", first, 0, 0);
       }

@@ -50,6 +50,8 @@ void grheap_collect_now(GRHEAP_Heap * heap) {
   heap->busy++;
   if (heap->verify != GRHEAP_VERIFY_OFF && !heap->shadow_lost) {
     (void)grheap_verify_walk(heap);
+  } else if (heap->verify != GRHEAP_VERIFY_OFF) {
+    heap->stats.verify_skipped++; /* the instrument is off, and says so */
   }
   grheap_mark(heap);
   grheap_weak_process(heap);

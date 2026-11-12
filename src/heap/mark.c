@@ -163,7 +163,9 @@ void grheap_mark_extra(GRHEAP_Heap * heap, GRHEAP_Span * span, size_t index) {
 static void forget_slot(const GRHEAP_Tracer * tracer, const void * slot) {
   uintptr_t at = (uintptr_t)slot;
   uintptr_t first = (uintptr_t)tracer->payload;
-  if (at >= first && at - first < tracer->size) {
+  /* Only an 8-aligned slot was dropped with the cell's range, which probes
+   * every 8-aligned address; one at another offset (a packed payload) is not. */
+  if (at % 8u == 0 && at >= first && at - first < tracer->size) {
     return;
   }
   grheap_shadow_set(tracer->heap, at, 0); /* zero removes it */

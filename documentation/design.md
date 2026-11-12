@@ -11,6 +11,11 @@ retention query and the relocation torture, a test-only mode that moves every
 unpinned object at every collection.
 What is still not here is listed at the end.
 
+**This library is 64-bit only.** Barrier-verify, weak cells and the ID index read
+and write pointer slots as whole 64-bit words, and `heap_internal.h` stops a
+build where a pointer is not eight bytes. It is built for 64-bit x86-64 and
+arm64, and has no 32-bit result.
+
 ## What this library is
 
 `runtime-heap` is the collector. It owns the memory of the objects an engine or

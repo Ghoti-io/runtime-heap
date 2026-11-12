@@ -182,13 +182,16 @@ typedef struct Buffer {
   size_t cap;
 } Buffer;
 
-/* Room for `more` bytes at the end, through `a`; false leaves it as it was. */
+/* Room for `more` bytes at the end, through `a`; false leaves it as it was.
+ * The buffer has storage once this has returned true, even for `more` of zero:
+ * the caller hands `p + len` to `memcpy` and to a type's hooks, and an object
+ * of no size is still an object with a payload address. */
 static bool buffer_reserve(const GRHEAP_Allocator * a, Buffer * b, size_t more) {
   if (more > SIZE_MAX - b->len) {
     return false;
   }
   size_t need = b->len + more;
-  if (need <= b->cap) {
+  if (need <= b->cap && b->p != NULL) {
     return true;
   }
   size_t cap = b->cap == 0 ? 256u : b->cap;

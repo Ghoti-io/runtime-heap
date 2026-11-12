@@ -387,9 +387,29 @@ size_t reach_count(const Model & m) {
   return n;
 }
 
+/* A type with no payload that reports the address its trace hook is given. */
+const void * g_empty_payload_seen = reinterpret_cast<const void *>(1);
+void empty_trace(GRHEAP_Tracer *, void * payload) { g_empty_payload_seen = payload; }
+const GRHEAP_Type kEmptyObject = GRHEAP_TYPE_INIT("empty-object", 0, empty_trace, nullptr, nullptr, nullptr, nullptr);
+
 } // namespace
 
 /* ---- round trips ------------------------------------------------------------- */
+
+TEST_F(ImageTest, AnObjectOfNoSizeFirstInAnImageStillGetsAPayloadAddressForItsHooks) {
+  // Nothing was copied before it, so the image's data buffer was empty and had
+  // no storage: the walk of the copy was handed NULL, and memcpy and memset
+  // were called with it.
+  ImgWorld src(1);
+  void * p = nullptr;
+  ASSERT_EQ(grheap_alloc(src.w.heap, &kEmptyObject, &p), GRHEAP_OK);
+  src.set(0, p);
+  g_empty_payload_seen = nullptr;
+  Taken t;
+  ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+  EXPECT_EQ(grheap_image_object_count(t.image), 1u);
+  EXPECT_NE(g_empty_payload_seen, nullptr) << "the trace hook was given no payload address";
+}
 
 TEST_F(ImageTest, AGraphWithCyclesSharingAndNullsRoundTripsToTheSameShape) {
   ImgWorld src(4);

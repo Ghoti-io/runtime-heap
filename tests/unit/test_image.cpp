@@ -1269,6 +1269,74 @@ const GRCORE_Key kAllocatingKey = GRCORE_KEY_INIT("allocating-after-heap",
     GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr, nullptr, alloc_key_snapshot,
     alloc_key_restore, alloc_key_settle);
 
+/* `trace` runs on a copy of the payload while an image is taken, and a payload
+ * is 16-aligned in the heap: the copy is too, whatever came before it. */
+uintptr_t g_copy_alignment_seen = 0;
+void alignment_trace(GRHEAP_Tracer *, void * payload) {
+  g_copy_alignment_seen |= reinterpret_cast<uintptr_t>(payload) % 16u;
+}
+const GRHEAP_Type kOddSized = GRHEAP_TYPE_INIT("odd-sized", 24, alignment_trace, nullptr, nullptr, nullptr, nullptr);
+
+TEST_F(ImageTest, TheCopyATraceRunsOnWhileAnImageIsTakenIsSixteenAligned) {
+  ImgWorld src(3);
+  for (size_t i = 0; i < 3; i++) {  // 24-byte payloads: each starts 8 past a 16 boundary in a packed copy
+    void * p = nullptr;
+    ASSERT_EQ(grheap_alloc(src.w.heap, &kOddSized, &p), GRHEAP_OK);
+    src.set(i, p);
+  }
+  g_copy_alignment_seen = 0;
+  Taken t;
+  ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+  EXPECT_EQ(g_copy_alignment_seen, 0u);
+}
+
+/* A key whose PREPARE adds a root slot. Settle runs in the destination's
+ * registration order, so this key, registered after the heap, prepares after it
+ * has counted, and the heap's COMMIT meets one more slot than it counted. */
+struct RootGrowingKey {
+  RootBox * box = nullptr;
+};
+GRCORE_Result growing_key_restore(GRCORE_Context *, void *, GRCORE_SnapshotReader * r, void *,
+    GRCORE_RestoreMode) {
+  uint64_t n = 0;
+  return grcore_snapshot_reader_u64(r, &n);
+}
+GRCORE_Result growing_key_settle(GRCORE_Context *, void * value, void *, GRCORE_SettleMode mode) {
+  if (mode == GRCORE_SETTLE_PREPARE) {
+    static_cast<RootGrowingKey *>(value)->box->words.push_back(0x5EED5EEDu);
+  }
+  return GRCORE_OK;
+}
+const GRCORE_Key kRootGrowingKey = GRCORE_KEY_INIT("root-growing-after-heap",
+    GRCORE_CARDINALITY_ONE, GRCORE_PHASE_NONE, nullptr, nullptr, alloc_key_snapshot,
+    growing_key_restore, growing_key_settle);
+
+TEST_F(ImageTest, ACommitThatMeetsMoreRootSlotsThanPrepareCountedLeavesTheExtraOnesAlone) {
+  ImgWorld src(2);
+  Model m;
+  build(src, m, 21, 30, 2);
+  RootGrowingKey src_key{&src.box};
+  ASSERT_EQ(grcore_context_register(src.w.ctx, &kRootGrowingKey, &src_key), GRCORE_OK);
+  GRCORE_Snapshot * snap = nullptr;
+  ASSERT_EQ(grcore_context_snapshot(src.w.ctx, nullptr, &snap), GRCORE_OK);
+
+  GRHEAP_RestoreEnv env = env_with();
+  GRCORE_RestoreEnv renv = GRCORE_RESTORE_ENV_INIT(nullptr, nullptr, nullptr, nullptr, nullptr);
+  renv.user = &env;
+  renv.lookup = [](void * u, const char * name) -> void * {
+    return std::strcmp(name, GRHEAP_SNAPSHOT_KEY_NAME) == 0 ? u : nullptr;
+  };
+  const size_t slots = src.box.words.size();
+  ImgWorld dst(slots);
+  RootGrowingKey dst_key{&dst.box};
+  ASSERT_EQ(grcore_context_register(dst.w.ctx, &kRootGrowingKey, &dst_key), GRCORE_OK);
+  GRCORE_Result restored = grcore_context_restore(dst.w.ctx, snap, &renv);
+  grcore_snapshot_release(snap);
+  ASSERT_EQ(restored, GRCORE_OK);
+  ASSERT_EQ(dst.box.words.size(), slots + 1u) << "the control: PREPARE added a slot";
+  EXPECT_EQ(dst.box.words.back(), 0x5EED5EEDu) << "the slot the image has no record for was written";
+}
+
 TEST_F(ImageTest, ACollectionBetweenTheHeapsApplyAndItsCommitKeepsWhatApplyMade) {
   ImgWorld src(1);
   Model m;

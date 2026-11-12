@@ -591,7 +591,9 @@ static void take_object(GRHEAP_Take * t, size_t i) {
   if (type_index == UINT32_MAX) {
     return;
   }
-  size_t off = align8(t->data.len);
+  /* 16-aligned, as a payload in the heap is: `trace` runs on this copy, and a
+   * payload with a 16-aligned member would be read misaligned at an 8 offset. */
+  size_t off = (t->data.len + 15u) & ~(size_t)15u;
   if (size > SIZE_MAX / 2u || !buffer_reserve(t->a, &t->data,
           off - t->data.len + align8((size_t)size))) {
     take_fail(t, GRHEAP_ERR_OOM);
@@ -1168,6 +1170,13 @@ typedef struct RootWrite {
 
 static void write_slot(void * user, uint64_t * slot) {
   RootWrite * w = user;
+  if (w->next >= w->p->nroots) {
+    /* More slots than PREPARE counted: a key that committed or prepared before
+     * this one changed what the root sources report. The image has no record
+     * for this one, and the roots section ends here: leave the slot alone. */
+    w->next++;
+    return;
+  }
   ImgRoot root;
   memcpy(&root, w->p->roots + w->next * sizeof root, sizeof root);
   w->next++;

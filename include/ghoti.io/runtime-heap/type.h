@@ -70,6 +70,12 @@ typedef struct GRHEAP_Tracer GRHEAP_Tracer;
  * and by then the objects its neighbours pointed at may already have been
  * freed in the same sweep.
  *
+ * When an image is taken, `trace` runs on a 16-aligned copy of the payload, not on
+ * the heap object: it must read `payload` and what the object owns, as above, and
+ * must not ask the heap about the pointer it was given (`grheap_size_of` and the
+ * like refuse a copy). Every slot it does not report is copied as it is, so a
+ * traced slot is the only kind of pointer a payload may hold.
+ *
  * @param tracer The tracer.
  * @param payload The object's payload.
  */

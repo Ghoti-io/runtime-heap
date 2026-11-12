@@ -251,7 +251,10 @@ TEST_F(WeakTest, ATargetFoundByAConservativeRangeStays) {
 }
 
 TEST_F(WeakTest, ACellThatIsItselfDeadIsDroppedWithoutACallback) {
-  HeapWorld w;
+  // The cell is held by nothing, and the test stores into it before the
+  // collection it is about. Torture would collect it at the target's allocation
+  // and hand its cell to the target, so the store would be into another object.
+  HeapWorld w(steady());
   the_heap = w.heap;
   WeakCell * cell = new_cell(w, 10);
   Node * t = target(w, 1);

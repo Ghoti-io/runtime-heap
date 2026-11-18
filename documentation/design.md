@@ -169,6 +169,42 @@ mask, one shift and one add.
 **Rejected: a decode callback.** It would be general, and an indirect call per
 slot in the mark loop, which is the hottest loop in the library.
 
+### One codec per heap is not enough: a codec per type and per root source
+
+Engines that trust each other share one heap, and each keeps its own value
+word. A heap-wide codec would make the heap decide which engine's words it can
+read. So the codec the heap's options carry is only the *default*, and two
+things can name another:
+
+- A **type** names the codec of the encoded words its objects hold
+  (`GRHEAP_Type.codec`, the last member of the size-prefixed struct; NULL, and
+  absent in a type compiled before it existed, mean the default). Every word
+  that type's `trace` reports with `grheap_trace_word`, and every `encoded`
+  weak slot of its weak spec, is decoded by it, and rewritten with it when an
+  object moves. The tracer carries the codec of the object being walked, so the
+  mark loop reads it from the tracer as it read the heap's before: one load, no
+  call.
+- A **root source** names the codec of the precise slots it reports
+  (`GRCORE_RootSource.codec`, `runtime-core`'s `b/roots.h`). The heap
+  enumerates the context's sources one at a time, with that source's codec in
+  force, so the collector, relocation, the retention query and image take,
+  prepare and commit all read a slot with the codec of the source that reported
+  it.
+
+A codec that is not well formed (a shift of 64 or more, a tag value outside its
+tag mask) makes a type invalid and a root source refused, because every decode
+under it would be undefined. A **heap image** records the codec of each type
+and of each root slot it was taken under, and an instantiation is refused,
+changing nothing, when the destination's type or root source for that name or
+position uses another: the words it would write would not be the ones the
+objects were taken with. The image carries no codec of the heap itself, since
+nothing in it is decoded by one.
+
+The codec is not carried per slot within a type. A slot of one engine's type
+that must hold another engine's *reference* holds it in its own engine's
+encoding; one that must hold another engine's *immediate* (a number) holds it
+through a one-word box object of its own.
+
 ## Precise slots and conservative ranges
 
 A precise slot must decode to the *exact start* of a live payload. Anything

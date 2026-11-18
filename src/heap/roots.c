@@ -224,3 +224,25 @@ void grheap_roots_free(GRHEAP_Heap * heap) {
   heap->nroots = 0;
   heap->roots_cap = 0;
 }
+
+GRCORE_Result grheap_roots_enumerate(
+    GRHEAP_Heap * heap, const GRCORE_RootVisitor * visitor) {
+  GRCORE_Context * context = heap->context;
+  /* The same walk as grcore_context_enumerate_roots, one source at a time so
+   * that the codec each names is in force while it reports. A source must not
+   * add or remove one (roots.h), so the count is read once. */
+  size_t count = grcore_context_root_source_count(context);
+  for (size_t i = 0; i < count; i++) {
+    const GRCORE_RootSource * source;
+    void * value;
+    GRCORE_Result r = grcore_context_root_source(context, i, &source, &value);
+    if (r != GRCORE_OK) {
+      heap->root_codec = NULL;
+      return r;
+    }
+    heap->root_codec = grcore_root_source_codec(source);
+    source->enumerate(context, value, visitor);
+  }
+  heap->root_codec = NULL;
+  return GRCORE_OK;
+}

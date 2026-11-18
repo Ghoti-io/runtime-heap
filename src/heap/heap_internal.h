@@ -155,6 +155,9 @@ struct GRHEAP_Tracer {
   struct GRHEAP_Take * take; ///< IMAGE: the take in progress.
   unsigned char * base;     ///< IMAGE: the copy of the payload being walked.
   size_t size;              ///< IMAGE, FORGET: its size.
+  const GRHEAP_ValueCodec * codec; ///< The codec of the encoded words this
+                            ///< tracer is shown: the walked object's type's,
+                            ///< else the heap's. Set where the tracer is made.
   struct GRHEAP_Retain * retain; ///< RETAIN: the query in progress. `payload`
                             ///< is the holder being expanded.
 };
@@ -202,6 +205,9 @@ typedef struct GRHEAP_RelocMove {
 /** The heap. */
 struct GRHEAP_Heap {
   GRCORE_Context * context;
+  /** While a root source's roots are being visited: the codec its precise
+   *  slots are decoded by (NULL: `codec`). Set by grheap_roots_enumerate. */
+  const GRHEAP_ValueCodec * root_codec;
   const GRCORE_Allocator * allocator; ///< The context's counting allocator.
   const GRCORE_PageProvider * pages;  ///< The context's counting provider.
   size_t block_size;                  ///< max(64 KiB, a page).
@@ -371,6 +377,19 @@ static inline GRHEAP_RestoreFn grheap_type_restore(const GRHEAP_Type * t) {
   return GRHEAP_TYPE_HAS(t, restore) ? t->restore : NULL;
 }
 
+/** The codec of the encoded words of a type's objects: its own, else the
+ *  heap's. */
+static inline const GRHEAP_ValueCodec * grheap_type_codec(
+    const GRHEAP_Heap * heap, const GRHEAP_Type * t) {
+  return GRHEAP_TYPE_HAS(t, codec) && t->codec != NULL ? t->codec : &heap->codec;
+}
+
+/** The codec of the precise root slot being visited: the source's, else the
+ *  heap's. Meaningful only inside grheap_roots_enumerate. */
+static inline const GRHEAP_ValueCodec * grheap_root_codec(const GRHEAP_Heap * heap) {
+  return heap->root_codec != NULL ? heap->root_codec : &heap->codec;
+}
+
 /** The cell size of an object with `size` payload bytes. */
 static inline size_t grheap_cell_of_size(uint64_t size) {
   return ((size_t)size + GRHEAP_HEADER_BYTES + 1u + 15u) & ~(size_t)15u;
@@ -405,9 +424,23 @@ GRHEAP_INTERNAL_API void grheap_mark_stack_free(GRHEAP_Heap * heap);
 /** Runs one collection. The caller has checked ownership and `busy`. */
 GRHEAP_INTERNAL_API void grheap_collect_now(GRHEAP_Heap * heap);
 
-/** Decodes a word with the heap's codec: false if the tag test fails. */
-GRHEAP_INTERNAL_API bool grheap_decode(
-    const GRHEAP_Heap * heap, uint64_t word, uint64_t * out_address);
+/** Decodes a word with a codec: false if the tag test fails. */
+GRHEAP_INTERNAL_API bool grheap_decode_with(
+    const GRHEAP_ValueCodec * codec, uint64_t word, uint64_t * out_address);
+
+/** The word that names `address` in place of `old_word`: the same bits
+ *  everywhere but the codec's address field (and the bits of that field below
+ *  the shift, which the decode drops and so the encoding keeps). */
+GRHEAP_INTERNAL_API uint64_t grheap_encode_with(
+    const GRHEAP_ValueCodec * codec, uint64_t old_word, uint64_t address);
+
+/** Asks every root source of the heap's context for its roots, in order, as
+ *  grcore_context_enumerate_roots does, but sets `heap->root_codec` to the
+ *  codec each source names before it reports, and back to NULL after. The
+ *  visitor's slot callback reads it with grheap_root_codec. Returns what that
+ *  function would: INVALID for a caller that does not own the context. */
+GRHEAP_INTERNAL_API GRCORE_Result grheap_roots_enumerate(
+    GRHEAP_Heap * heap, const GRCORE_RootVisitor * visitor);
 
 /** Marks the object at (span, index) and everything newly reachable from it,
  *  draining the mark stack. Counts nothing: the caller has validated it. */

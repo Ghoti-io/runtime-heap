@@ -68,7 +68,6 @@
 typedef struct ImgHeader {
   uint64_t magic;
   uint64_t version;
-  uint64_t tag_mask, tag_value, mask, shift, base; /* the codec */
   uint64_t next_id;
   uint64_t nobjects, ntypes, nroots, nslots;
   uint64_t types_off, objects_off, slots_off, roots_off;
@@ -76,9 +75,17 @@ typedef struct ImgHeader {
   uint64_t total;
 } ImgHeader;
 
+/* A value codec as the image records it: the one a type's encoded words, or a
+ * root source's precise slots, were taken under. A restore requires the
+ * destination to use the same, because the words it writes are encoded by it. */
+typedef struct ImgCodec {
+  uint64_t tag_mask, tag_value, mask, shift, base;
+} ImgCodec;
+
 typedef struct ImgType {
   uint64_t name_off;
   uint64_t name_len;
+  ImgCodec codec; /* what the type's encoded words were taken under */
 } ImgType;
 
 typedef struct ImgObject {
@@ -102,6 +109,7 @@ typedef struct ImgSlot {
 typedef struct ImgRoot {
   uint64_t word;        /* the word, or the template of an encoded pointer */
   uint64_t target_plus1; /* zero: the word is as it is */
+  ImgCodec codec;       /* what the root source's slot was taken under */
 } ImgRoot;
 
 enum { SLOT_RAW = 0, SLOT_WORD = 1 };
@@ -118,6 +126,16 @@ static size_t align8(size_t n) {
 }
 
 /* ---- the codec, both ways ---------------------------------------------- */
+
+static ImgCodec img_codec(const GRHEAP_ValueCodec * c) {
+  ImgCodec r = {c->tag_mask, c->tag_value, c->mask, c->shift, c->base};
+  return r;
+}
+
+static bool img_codec_equal(const ImgCodec * a, const GRHEAP_ValueCodec * c) {
+  return a->tag_mask == c->tag_mask && a->tag_value == c->tag_value &&
+      a->mask == c->mask && a->shift == c->shift && a->base == c->base;
+}
 
 static uint64_t encode_word(
     const GRHEAP_ValueCodec * c, uint64_t template_word, uint64_t address) {
@@ -424,11 +442,12 @@ static uint32_t take_intern(GRHEAP_Take * t, void * payload) {
  * `*out_payload` is set when it names a live object. */
 typedef enum { WORD_PLAIN = 0, WORD_OBJECT, WORD_STALE } WordKind;
 
-static WordKind classify(const GRHEAP_Heap * heap, uint64_t word, bool encoded,
+static WordKind classify(const GRHEAP_Heap * heap,
+    const GRHEAP_ValueCodec * codec, uint64_t word, bool encoded,
     uint64_t * out_address) {
   uint64_t address;
   if (encoded) {
-    if (!grheap_decode(heap, word, &address)) {
+    if (!grheap_decode_with(codec, word, &address)) {
       return WORD_PLAIN;
     }
   } else {
@@ -461,11 +480,11 @@ void grheap_image_trace(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
     take_fail(t, GRHEAP_ERR_INVALID);
     return;
   }
-  const GRHEAP_ValueCodec * c = &t->heap->codec;
+  const GRHEAP_ValueCodec * c = tracer->codec;
   uint64_t word;
   memcpy(&word, slot, sizeof word);
   uint64_t address = 0;
-  WordKind kind = classify(t->heap, word, encoded, &address);
+  WordKind kind = classify(t->heap, c, word, encoded, &address);
   if (kind == WORD_PLAIN) {
     return;
   }
@@ -500,10 +519,10 @@ static void take_root_slot(void * user, uint64_t * slot) {
   if (t->failure != GRHEAP_OK) {
     return;
   }
-  const GRHEAP_ValueCodec * c = &t->heap->codec;
+  const GRHEAP_ValueCodec * c = grheap_root_codec(t->heap);
   uint64_t word = *slot;
   uint64_t address = 0;
-  WordKind kind = classify(t->heap, word, true, &address);
+  WordKind kind = classify(t->heap, c, word, true, &address);
   void * roots = array_reserve(
       t->a, t->roots, &t->roots_cap, t->nroots, sizeof *t->roots);
   if (roots == NULL) {
@@ -511,7 +530,7 @@ static void take_root_slot(void * user, uint64_t * slot) {
     return;
   }
   t->roots = roots;
-  ImgRoot root = {word, 0};
+  ImgRoot root = {word, 0, img_codec(c)};
   if (kind != WORD_PLAIN) {
     root.word = word & ~c->mask;
     if (kind == WORD_OBJECT) {
@@ -613,7 +632,8 @@ static void take_object(GRHEAP_Take * t, size_t i) {
 
   unsigned char * copy = t->data.p + off;
   if (type->trace != NULL) {
-    GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_IMAGE};
+    GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_IMAGE,
+        .codec = grheap_type_codec(heap, type)};
     tracer.take = t;
     tracer.base = copy;
     tracer.size = (size_t)size;
@@ -660,11 +680,6 @@ static GRHEAP_Result take_assemble(GRHEAP_Take * t, GRHEAP_Image ** out) {
   memset(&h, 0, sizeof h);
   h.magic = IMAGE_MAGIC;
   h.version = IMAGE_VERSION;
-  h.tag_mask = heap->codec.tag_mask;
-  h.tag_value = heap->codec.tag_value;
-  h.mask = heap->codec.mask;
-  h.shift = heap->codec.shift;
-  h.base = heap->codec.base;
   h.next_id = heap->next_id;
   h.nobjects = t->nobjs;
   h.ntypes = t->ntypes;
@@ -701,8 +716,8 @@ static GRHEAP_Result take_assemble(GRHEAP_Take * t, GRHEAP_Image ** out) {
   unsigned char * b = image->bytes;
   memcpy(b, &h, sizeof h);
   for (size_t i = 0; i < t->ntypes; i++) {
-    ImgType rec = {h.strings_off + t->name_offsets[i],
-        strlen(t->types[i]->name)};
+    ImgType rec = {h.strings_off + t->name_offsets[i], strlen(t->types[i]->name),
+        img_codec(grheap_type_codec(heap, t->types[i]))};
     memcpy(b + h.types_off + i * sizeof rec, &rec, sizeof rec);
   }
   if (t->nobjs != 0) {
@@ -752,7 +767,7 @@ GRHEAP_Result grheap_image_take(GRHEAP_Heap * heap,
 
   GRCORE_RootVisitor visitor = {&t, take_root_slot, take_root_range};
   GRHEAP_Result r = GRHEAP_OK;
-  if (grcore_context_enumerate_roots(heap->context, &visitor) != GRCORE_OK) {
+  if (grheap_roots_enumerate(heap, &visitor) != GRCORE_OK) {
     r = GRHEAP_ERR_INVALID;
   }
   if (r == GRHEAP_OK && t.range_seen) {
@@ -918,11 +933,6 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
       !grheap_restore_env_valid(env) || env->resolve == NULL) {
     return GRHEAP_ERR_INVALID;
   }
-  const GRHEAP_ValueCodec * c = &heap->codec;
-  if (v->h.tag_mask != c->tag_mask || v->h.tag_value != c->tag_value ||
-      v->h.mask != c->mask || v->h.shift != c->shift || v->h.base != c->base) {
-    return GRHEAP_ERR_INVALID; /* a different value encoding */
-  }
   if (heap->nids != 0 || heap->next_id != 0 || heap->pending != NULL ||
       (whole_heap && heap->stats.live_objects != 0)) {
     return GRHEAP_ERR_INVALID; /* not empty */
@@ -951,6 +961,10 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
         env->resolve(env->user, (const char *)v->bytes + rec.name_off);
     if (!grheap_type_valid(type) || grheap_type_weak(type) != NULL) {
       r = GRHEAP_ERR_INVALID;
+      break;
+    }
+    if (!img_codec_equal(&rec.codec, grheap_type_codec(heap, type))) {
+      r = GRHEAP_ERR_INVALID; /* a different value encoding */
       break;
     }
     types[i] = type;
@@ -1105,8 +1119,9 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
       uint64_t address = (uint64_t)(uintptr_t)pending->addrs[s.target];
       uint64_t word;
       memcpy(&word, payload + s.offset, sizeof word);
-      word = s.kind == SLOT_RAW ? address
-                                : encode_word(&heap->codec, word, address);
+      word = s.kind == SLOT_RAW
+          ? address
+          : encode_word(grheap_type_codec(heap, types[o.type]), word, address);
       memcpy(payload + s.offset, &word, sizeof word);
     }
   }
@@ -1165,11 +1180,24 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
 typedef struct RootCount {
   size_t slots;
   bool range;
+  bool mismatch; /* a slot's codec is not the one the image recorded */
+  const GRHEAP_Heap * heap;
+  const GRHEAP_Pending * p;
 } RootCount;
 
 static void count_slot(void * user, uint64_t * slot) {
   (void)slot;
-  ((RootCount *)user)->slots++;
+  RootCount * c = user;
+  /* The slot must be decoded by what it was taken under: COMMIT writes words
+   * encoded by the codec of the source it finds there. */
+  if (c->slots < c->p->nroots) {
+    ImgRoot root;
+    memcpy(&root, c->p->roots + c->slots * sizeof root, sizeof root);
+    if (!img_codec_equal(&root.codec, grheap_root_codec(c->heap))) {
+      c->mismatch = true;
+    }
+  }
+  c->slots++;
 }
 
 static void count_range(void * user, const GRCORE_ConservativeRange * range) {
@@ -1181,10 +1209,10 @@ static void count_range(void * user, const GRCORE_ConservativeRange * range) {
 /* PREPARE: COMMIT cannot fail if the destination reports the layout the image
  * recorded. */
 static GRHEAP_Result prepare(GRHEAP_Heap * heap, GRHEAP_Pending * p) {
-  RootCount count = {0, false};
+  RootCount count = {0, false, false, heap, p};
   GRCORE_RootVisitor visitor = {&count, count_slot, count_range};
-  if (grcore_context_enumerate_roots(heap->context, &visitor) != GRCORE_OK ||
-      count.range || count.slots != p->nroots) {
+  if (grheap_roots_enumerate(heap, &visitor) != GRCORE_OK ||
+      count.range || count.mismatch || count.slots != p->nroots) {
     return GRHEAP_ERR_INVALID;
   }
   p->prepared = true;
@@ -1212,7 +1240,7 @@ static void write_slot(void * user, uint64_t * slot) {
   if (root.target_plus1 == 0) {
     *slot = root.word;
   } else {
-    *slot = encode_word(&w->heap->codec, root.word,
+    *slot = encode_word(grheap_root_codec(w->heap), root.word,
         (uint64_t)(uintptr_t)w->p->addrs[root.target_plus1 - 1u]);
   }
 }
@@ -1220,7 +1248,7 @@ static void write_slot(void * user, uint64_t * slot) {
 static void commit(GRHEAP_Heap * heap, GRHEAP_Pending * p) {
   RootWrite w = {heap, p, 0};
   GRCORE_RootVisitor visitor = {&w, write_slot, NULL};
-  (void)grcore_context_enumerate_roots(heap->context, &visitor);
+  (void)grheap_roots_enumerate(heap, &visitor);
 }
 
 static void abandon(GRHEAP_Heap * heap, GRHEAP_Pending * p) {

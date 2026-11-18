@@ -44,6 +44,8 @@
 #include <ghoti.io/runtime-heap/allocator.h>
 #include <ghoti.io/runtime-heap/core.h>
 
+#include <ghoti.io/runtime-core/b/roots.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -76,22 +78,19 @@ typedef enum {
  * it here as data: the same mask, shift and base a conservative range carries,
  * plus a tag test for slots whose words may be integers.
  *
- * Applies to the precise slots only: the slots a root source reports and the
- * words an object's `trace` function reports with ::grheap_trace_word. A
- * conservative range carries its own mask, shift and base and has no tag.
+ * This is `runtime-core`'s ::GRCORE_ValueCodec, which a root source names for
+ * the slots it reports. The heap's own codec, the one an options object
+ * carries, is the *default*: it decodes the words of a type that names no
+ * codec of its own (::GRHEAP_Type `codec`) and the slots of a root source that
+ * names none. Engines whose words differ share one heap by each naming theirs.
+ * A conservative range carries its own mask, shift and base and has no tag.
  *
  * The default is the identity: every word is a pointer, `tag_mask` and
  * `tag_value` are zero (which is how "no tag test" is spelled, since
  * `(word & 0) == 0` is always true), `mask` is all ones, `shift` and `base`
  * are zero.
  */
-typedef struct GRHEAP_ValueCodec {
-  uint64_t tag_mask;  ///< Bits of a word the tag test looks at.
-  uint64_t tag_value; ///< What those bits must equal. Within `tag_mask`.
-  uint64_t mask;      ///< Bits of a word that carry the address.
-  unsigned shift;     ///< How far to shift them down; below 64.
-  uint64_t base;      ///< Added after the shift.
-} GRHEAP_ValueCodec;
+typedef GRCORE_ValueCodec GRHEAP_ValueCodec;
 
 /** @brief How much the barrier-verify instrument does. */
 typedef enum {

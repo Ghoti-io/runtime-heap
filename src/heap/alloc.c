@@ -116,8 +116,15 @@ bool grheap_type_valid(const GRHEAP_Type * type) {
    * have the heap read members that are not there, and one that is not a
    * multiple of the alignment cannot be the sizeof of any struct. A size above
    * this header's is a type from a newer header, which is accepted. */
-  return type != NULL && type->struct_size >= GRHEAP_TYPE_MIN_SIZE &&
-      type->struct_size % _Alignof(GRHEAP_Type) == 0;
+  if (type == NULL || type->struct_size < GRHEAP_TYPE_MIN_SIZE ||
+      type->struct_size % _Alignof(GRHEAP_Type) != 0) {
+    return false;
+  }
+  /* A codec the size covers must be well formed: a shift of 64 or more or a
+   * tag value outside its mask would make every decode of the type's words
+   * undefined. */
+  return !GRHEAP_TYPE_HAS(type, codec) || type->codec == NULL ||
+      grcore_value_codec_valid(type->codec);
 }
 
 static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,

@@ -108,22 +108,12 @@ void * grheap_reloc_forward(const GRHEAP_Heap * heap, const void * object) {
   return (void *)(uintptr_t)key;
 }
 
-/* The word that names `address` in place of the one a slot holds: the same
- * bits everywhere but the address field (and the bits of that field below the
- * shift, which the decode drops and so the encoding keeps). */
-static uint64_t encode(const GRHEAP_Heap * heap, uint64_t old_word, uint64_t address) {
-  const GRHEAP_ValueCodec * c = &heap->codec;
-  uint64_t low = c->shift == 0 ? 0 : (UINT64_C(1) << c->shift) - 1u;
-  uint64_t field = c->mask & ~low;
-  return (old_word & ~field) | (((address - c->base) << c->shift) & field);
-}
-
 void grheap_reloc_slot(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
   GRHEAP_Heap * heap = tracer->heap;
   uint64_t old_word;
   memcpy(&old_word, slot, sizeof old_word);
   uint64_t address = old_word;
-  if (encoded && !grheap_decode(heap, old_word, &address)) {
+  if (encoded && !grheap_decode_with(tracer->codec, old_word, &address)) {
     return; /* an immediate, not a reference */
   }
   if (address == 0 || (uint64_t)(uintptr_t)address != address) {
@@ -136,7 +126,7 @@ void grheap_reloc_slot(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
 #ifdef GRHEAP_PLANT_RELOC_ENCODE_STALE
   uint64_t new_word = encoded ? old_word : (uint64_t)to;
 #else
-  uint64_t new_word = encoded ? encode(heap, old_word, to) : (uint64_t)to;
+  uint64_t new_word = encoded ? grheap_encode_with(tracer->codec, old_word, to) : (uint64_t)to;
 #endif
   memcpy(slot, &new_word, sizeof new_word);
   if (heap->verify != GRHEAP_VERIFY_OFF) {
@@ -146,7 +136,8 @@ void grheap_reloc_slot(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
 
 /* The precise slots a root source reports. */
 static void visit_root_slot(void * user, uint64_t * slot) {
-  GRHEAP_Tracer tracer = {.heap = user, .mode = GRHEAP_TRACE_RELOCATE};
+  GRHEAP_Tracer tracer = {.heap = user, .mode = GRHEAP_TRACE_RELOCATE,
+      .codec = grheap_root_codec(user)};
   grheap_reloc_slot(&tracer, slot, true);
 }
 
@@ -163,7 +154,8 @@ static void weak_slot(void * user, const void * slot) {
 /* Every precise and weak slot of one marked object. */
 static void rewrite_object(GRHEAP_Heap * heap, void * payload) {
   const GRHEAP_Type * type = grheap_header(payload)->type;
-  GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_RELOCATE};
+  GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_RELOCATE,
+      .codec = grheap_type_codec(heap, type)};
   if (type->trace != NULL) {
     type->trace(&tracer, payload);
   }
@@ -310,7 +302,7 @@ void grheap_reloc_run(GRHEAP_Heap * heap) {
    * would be left naming the old cells while the objects had moved: a half
    * rewritten heap is worse than a stop, and this mode exists only to be
    * stopped by what it finds, so it stops. */
-  if (grcore_context_enumerate_roots(heap->context, &visitor) != GRCORE_OK) {
+  if (grheap_roots_enumerate(heap, &visitor) != GRCORE_OK) {
     fprintf(stderr,
         "runtime-heap relocation: the root sources could not be enumerated; "
         "the heap is half rewritten, so the process stops\n");

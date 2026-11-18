@@ -39,6 +39,7 @@
 #include <ghoti.io/runtime-heap/macros.h>
 
 #include <ghoti.io/runtime-heap/core.h>
+#include <ghoti.io/runtime-heap/options.h>
 
 #include <ghoti.io/runtime-core/b/context.h>
 
@@ -253,6 +254,18 @@ typedef struct GRHEAP_Type {
   /** Rebuilds the host pointers `snapshot` named. May be NULL; absent as
    *  `snapshot` is. */
   GRHEAP_RestoreFn restore;
+  /**
+   * How the encoded words this type's `trace` reports with
+   * ::grheap_trace_word, and its weak spec's `encoded` slots, are decoded: the
+   * codec of the engine whose value words the object holds. It must outlive
+   * every object of the type. NULL, and absent in a type whose `struct_size`
+   * ends before it, mean the heap's own codec (::GRHEAP_ValueCodec), so a type
+   * written before this member existed keeps its meaning. A codec that is not
+   * valid (::grcore_value_codec_valid) makes the type invalid. Several types
+   * with different codecs may live in one heap: that is how engines with
+   * different value words share it.
+   */
+  const GRHEAP_ValueCodec * codec;
 } GRHEAP_Type;
 
 /**
@@ -268,13 +281,22 @@ typedef struct GRHEAP_Type {
  *
  * Expands to a braced initialiser that begins with `sizeof(GRHEAP_Type)`, a
  * constant expression in C17 and C++20, and the members given are the ones
- * after `struct_size`, positionally. Give every member, NULL where unused.
+ * after `struct_size`, positionally, through `restore`. Give every one of
+ * those, NULL where unused; `codec` is NULL (the heap's own codec). A type
+ * whose words use a codec of its own is made with ::GRHEAP_TYPE_INIT_CODEC.
  * @code
  * static const GRHEAP_Type node_type = GRHEAP_TYPE_INIT("node", sizeof(Node),
  *     node_trace, NULL, NULL, NULL, NULL);
  * @endcode
  */
-#define GRHEAP_TYPE_INIT(...) { sizeof(GRHEAP_Type), __VA_ARGS__ }
+#define GRHEAP_TYPE_INIT(...) { sizeof(GRHEAP_Type), __VA_ARGS__, NULL }
+
+/**
+ * @brief The initialiser of a type whose encoded words use a codec of its own:
+ *   `GRHEAP_TYPE_INIT_CODEC(name, size, trace, destroy, weak, snapshot,
+ *   restore, &codec)`. As ::GRHEAP_TYPE_INIT, with the codec last.
+ */
+#define GRHEAP_TYPE_INIT_CODEC(...) { sizeof(GRHEAP_Type), __VA_ARGS__ }
 
 /**
  * @brief Whether a type's `struct_size` covers a member, so that reading it is
@@ -314,7 +336,8 @@ GRHEAP_API void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot);
 
 /**
  * @brief Reports a slot that holds an encoded value, which is decoded with
- *   the heap's value codec (::GRHEAP_ValueCodec).
+ *   the codec of the object whose `trace` is running: its type's `codec`, or
+ *   the heap's own codec when the type names none (::GRHEAP_ValueCodec).
  *
  * A word that fails the codec's tag test is not a pointer and is ignored
  * without comment. A word that passes it must decode to the start of a live

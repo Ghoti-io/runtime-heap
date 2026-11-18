@@ -233,7 +233,7 @@ static void visit_slot(void * user, uint64_t * slot) {
   uint64_t address;
   r->root_kind = GRHEAP_ROOT_CONTEXT_SOURCE;
   r->root_ordinal = r->slot_count++;
-  if (grheap_decode(r->heap, *slot, &address)) {
+  if (grheap_decode_with(grheap_root_codec(r->heap), *slot, &address)) {
     root_precise(r, address);
   }
 }
@@ -317,10 +317,12 @@ static void enumerate_roots(Retain * r) {
       break;
     }
     r->root_source = source->name;
+    heap->root_codec = grcore_root_source_codec(source);
     r->slot_count = 0;
     r->range_count = 0;
     source->enumerate(heap->context, value, &visitor);
   }
+  heap->root_codec = NULL;
   r->root_source = NULL;
 }
 
@@ -333,7 +335,7 @@ void grheap_retention_trace(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
   }
   uint64_t address;
   if (encoded) {
-    if (!grheap_decode(r->heap, *(const uint64_t *)slot, &address)) {
+    if (!grheap_decode_with(tracer->codec, *(const uint64_t *)slot, &address)) {
       return;
     }
   } else {
@@ -362,7 +364,8 @@ static void expand(Retain * r, size_t index) {
     return;
   }
   GRHEAP_Tracer tracer = {.heap = r->heap, .mode = GRHEAP_TRACE_RETAIN,
-      .payload = payload, .retain = r};
+      .payload = payload, .retain = r,
+      .codec = grheap_type_codec(r->heap, type)};
   r->holder = index;
   type->trace(&tracer, payload);
 }
@@ -382,7 +385,11 @@ static SlotState classify(const GRHEAP_Heap * heap, const GRHEAP_WeakSpec * spec
     const unsigned char * payload, size_t offset, void ** out_payload) {
   uint64_t address;
   memcpy(&address, payload + offset, sizeof address);
-  if (spec->encoded && !grheap_decode(heap, address, &address)) {
+  /* An encoded weak slot is decoded by the codec of the object's own type. */
+  if (spec->encoded &&
+      !grheap_decode_with(
+          grheap_type_codec(heap, grheap_header((void *)(uintptr_t)payload)->type),
+          address, &address)) {
     return SLOT_IMMEDIATE;
   }
   if (address == 0) {

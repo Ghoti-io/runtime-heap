@@ -53,13 +53,19 @@
 #define GRHEAP_NO_ASAN
 #endif
 
-bool grheap_decode(const GRHEAP_Heap * heap, uint64_t word, uint64_t * out) {
-  const GRHEAP_ValueCodec * c = &heap->codec;
+bool grheap_decode_with(const GRHEAP_ValueCodec * c, uint64_t word, uint64_t * out) {
   if ((word & c->tag_mask) != c->tag_value) {
     return false;
   }
   *out = ((word & c->mask) >> c->shift) + c->base;
   return true;
+}
+
+uint64_t grheap_encode_with(
+    const GRHEAP_ValueCodec * c, uint64_t old_word, uint64_t address) {
+  uint64_t low = c->shift == 0 ? 0 : (UINT64_C(1) << c->shift) - 1u;
+  uint64_t field = c->mask & ~low;
+  return (old_word & ~field) | (((address - c->base) << c->shift) & field);
 }
 
 static void push(GRHEAP_Heap * heap, void * payload) {
@@ -114,7 +120,8 @@ static void mark_precise(GRHEAP_Heap * heap, uint64_t address) {
 static void trace_payload(GRHEAP_Heap * heap, void * payload) {
   const GRHEAP_Type * type = grheap_header(payload)->type;
   if (type->trace != NULL) {
-    GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_MARK};
+    GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_MARK,
+        .codec = grheap_type_codec(heap, type)};
     type->trace(&tracer, payload);
   }
 }
@@ -235,7 +242,7 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
   }
 #endif
   uint64_t address;
-  if (grheap_decode(tracer->heap, *slot, &address)) {
+  if (grheap_decode_with(tracer->codec, *slot, &address)) {
     mark_precise(tracer->heap, address);
   }
 }
@@ -243,7 +250,7 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
 static void visit_slot(void * user, uint64_t * slot) {
   GRHEAP_Heap * heap = user;
   uint64_t address;
-  if (grheap_decode(heap, *slot, &address)) {
+  if (grheap_decode_with(grheap_root_codec(heap), *slot, &address)) {
     mark_precise(heap, address);
   }
 }
@@ -335,7 +342,7 @@ void grheap_mark(GRHEAP_Heap * heap) {
   finish(heap);
 
   GRCORE_RootVisitor visitor = {heap, visit_slot, visit_range};
-  grcore_context_enumerate_roots(heap->context, &visitor);
+  grheap_roots_enumerate(heap, &visitor);
   finish(heap);
 }
 

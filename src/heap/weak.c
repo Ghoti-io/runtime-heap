@@ -69,7 +69,11 @@ static RefState classify(const GRHEAP_Heap * heap, const GRHEAP_WeakSpec * spec,
     const unsigned char * payload, size_t offset, GRHEAP_Span ** out_span,
     size_t * out_index) {
   uint64_t address = load(payload, offset);
-  if (spec->encoded && !grheap_decode(heap, address, &address)) {
+  /* An encoded weak slot is decoded by the codec of the object's own type. */
+  if (spec->encoded &&
+      !grheap_decode_with(
+          grheap_type_codec(heap, grheap_header((void *)(uintptr_t)payload)->type),
+          address, &address)) {
     return REF_IMMEDIATE;
   }
   if (address == 0) {

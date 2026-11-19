@@ -135,7 +135,73 @@ typedef struct GRHEAP_Stats {
                               ///< because the shadow table could not grow: a verify
                               ///< run that finishes with this above zero checked less
                               ///< than it claims.
+  uint64_t address_refusals;  ///< Blocks the provider gave above the address
+                              ///< limit, returned, and the allocation refused.
 } GRHEAP_Stats;
+
+/** @brief Why an engine was refused (::grheap_attach_check). */
+typedef enum {
+  GRHEAP_ATTACH_OK = 0,
+  GRHEAP_ATTACH_ADDRESS_RANGE, ///< The heap's address limit exceeds what the
+                               ///< engine's value word encodes.
+  GRHEAP_ATTACH_MODE           ///< The heap's mode is not one the engine runs in.
+} GRHEAP_AttachReason;
+
+/** @brief The collected mode, as a bit of ::GRHEAP_Attach `modes`. */
+#define GRHEAP_ATTACH_MODE_COLLECTED 1u
+/** @brief The arena mode, as a bit of ::GRHEAP_Attach `modes`. */
+#define GRHEAP_ATTACH_MODE_ARENA 2u
+
+/**
+ * @brief What an engine needs of the heap it attaches to. Size-prefixed like
+ *   a type: define it with ::GRHEAP_ATTACH_INIT.
+ */
+typedef struct GRHEAP_Attach {
+  size_t size;           ///< `sizeof(GRHEAP_Attach)` as compiled. Set by the macro.
+  const char * name;     ///< The engine, for diagnostics. May be NULL.
+  unsigned address_bits; ///< How many address bits the engine's value word
+                         ///< encodes; the heap's limit must not exceed it.
+  unsigned modes;        ///< Heap modes the engine runs in
+                         ///< (::GRHEAP_ATTACH_MODE_COLLECTED, `_ARENA`); zero
+                         ///< means any.
+} GRHEAP_Attach;
+
+/** @brief `GRHEAP_ATTACH_INIT(name, address_bits, modes)`. */
+#define GRHEAP_ATTACH_INIT(name_, bits_, modes_) \
+  { sizeof(GRHEAP_Attach), name_, bits_, modes_ }
+
+/**
+ * @brief Whether an attach description is acceptable (size and bits).
+ *
+ * @param attach The description. NULL is not valid.
+ * @return true when `size` covers the members and `address_bits` is 16 to 64.
+ */
+GRHEAP_API bool grheap_attach_valid(const GRHEAP_Attach * attach);
+
+/**
+ * @brief How many address bits every object of the heap fits in.
+ *
+ * @param heap The heap.
+ * @return The limit set by ::grheap_options_set_address_bits; zero for NULL.
+ */
+GRHEAP_API unsigned grheap_address_bits(const GRHEAP_Heap * heap);
+
+/**
+ * @brief Checks that an engine can attach to a heap the host made.
+ *
+ * A pure check: it changes nothing, whatever the answer. An engine attaches by
+ * using the heap (its types, its root source), so it calls this first and
+ * stops, naming `reason`, when it is refused.
+ *
+ * @param heap The heap.
+ * @param attach The engine's needs.
+ * @param out_reason Receives the reason; may be NULL.
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_UNSUPPORTED when the heap does not suit
+ *   the engine (`out_reason` says why); ::GRHEAP_ERR_INVALID for a NULL heap
+ *   or an invalid description.
+ */
+GRHEAP_API GRHEAP_Result grheap_attach_check(const GRHEAP_Heap * heap,
+    const GRHEAP_Attach * attach, GRHEAP_AttachReason * out_reason);
 
 /**
  * @brief Creates the context's heap and attaches it.
@@ -281,6 +347,59 @@ GRHEAP_API GRHEAP_Result grheap_size_of(
  */
 GRHEAP_API GRHEAP_Result grheap_stats(
     const GRHEAP_Heap * heap, GRHEAP_Stats * out_stats);
+
+/** @brief The kinds of GC point (AD-17). */
+typedef enum {
+  /** An allocation's slow path: the heap's own, counted here. */
+  GRHEAP_GC_POINT_ALLOCATION = 0,
+  /** A poll the heap's handler sees: the heap's own, counted here. */
+  GRHEAP_GC_POINT_POLL,
+  /** A poll the heap's handler does not see, which an engine declares. */
+  GRHEAP_GC_POINT_ENGINE_POLL,
+  /** A call out of guest code. */
+  GRHEAP_GC_POINT_CALL_OUT,
+  /** A frame push. */
+  GRHEAP_GC_POINT_FRAME_PUSH,
+  /** A nested-activation entry. */
+  GRHEAP_GC_POINT_NESTED_ACTIVATION,
+  /** The number of kinds; not a kind. */
+  GRHEAP_GC_POINT_KIND_COUNT
+} GRHEAP_GcPointKind;
+
+/**
+ * @brief Declares that the caller is at a GC point of a kind the heap does
+ *   not own.
+ *
+ * Under a torture mode it does what that mode does at every GC point (today:
+ * a collection, which under relocation torture also moves what it may), so
+ * every mode reaches every point from one call and an engine keeps no switch
+ * of its own. Otherwise it does nothing. Every raw reference the caller holds
+ * is invalid afterwards, as after any GC point.
+ *
+ * @param heap The heap.
+ * @param kind One of ::GRHEAP_GcPointKind other than the heap's own
+ *   (::GRHEAP_GC_POINT_ALLOCATION and ::GRHEAP_GC_POINT_POLL are refused).
+ * @return ::GRHEAP_OK; ::GRHEAP_ERR_INVALID for a NULL heap, an unknown or
+ *   heap-owned kind, a non-owner, or a heap that is busy (inside `trace`,
+ *   `destroy` or `cleared`). A refusal changes nothing.
+ */
+GRHEAP_API GRHEAP_Result grheap_gc_point(GRHEAP_Heap * heap, GRHEAP_GcPointKind kind);
+
+/**
+ * @brief How many GC points of a kind the heap has seen, and how many a
+ *   torture mode acted on.
+ *
+ * The heap's own kinds count as well as the declared ones, so a gate can fail
+ * when a kind an engine has reports zero acted.
+ *
+ * @param heap The heap.
+ * @param kind The kind.
+ * @param out_seen Receives the points seen; may be NULL.
+ * @param out_acted Receives the points a torture mode acted on; may be NULL.
+ * @return ::GRHEAP_OK, or ::GRHEAP_ERR_INVALID for a NULL heap or unknown kind.
+ */
+GRHEAP_API GRHEAP_Result grheap_gc_point_counts(const GRHEAP_Heap * heap,
+    GRHEAP_GcPointKind kind, uint64_t * out_seen, uint64_t * out_acted);
 
 #ifdef __cplusplus
 }

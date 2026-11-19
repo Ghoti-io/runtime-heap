@@ -167,6 +167,15 @@ GRHEAP_Span * grheap_span_create(
     heap->allocator->free_fn(heap->allocator->ctx, span);
     return NULL;
   }
+  /* Every object must fit in the address bits the heap promised (RH-2): a
+   * block at or above the limit is given back and the allocation refused. */
+  if (heap->address_bits < 8u * sizeof(uintptr_t) &&
+      ((uint64_t)(uintptr_t)mem + map_size) > (UINT64_C(1) << heap->address_bits)) {
+    heap->pages->unmap(heap->pages->ctx, mem, map_size);
+    heap->allocator->free_fn(heap->allocator->ctx, span);
+    heap->stats.address_refusals++;
+    return NULL;
+  }
   span->base = (uintptr_t)mem;
   span->size = map_size;
   span->kind = kind;

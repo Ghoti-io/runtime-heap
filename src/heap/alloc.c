@@ -156,9 +156,11 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
     }
   } else {
     bool collected = false;
+    heap->gc_seen[GRHEAP_GC_POINT_ALLOCATION]++;
     if (heap->torture) {
       /* A GC point (AD-17) taken for real, every time: whatever is held only
        * in a C variable is gone now, and its cell is poisoned. */
+      heap->gc_acted[GRHEAP_GC_POINT_ALLOCATION]++;
       heap->stats.torture_collections++;
       grheap_collect_now(heap);
       collected = true;

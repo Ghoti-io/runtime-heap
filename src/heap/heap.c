@@ -48,8 +48,10 @@ static void heap_poll(
   /* Torture collects at every poll, and a reclaim request is one more reason
    * to: one collection answers both. */
   bool torture = heap->torture;
+  heap->gc_seen[GRHEAP_GC_POINT_POLL]++;
   if (torture || grcore_pollcall_reclaim_requested(call)) {
     if (torture) {
+      heap->gc_acted[GRHEAP_GC_POINT_POLL]++;
       heap->stats.torture_collections++;
     }
     grheap_collect_now(heap);
@@ -109,6 +111,7 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->auto_collect = options->auto_collect;
     heap->torture = options->torture;
     heap->verify = options->verify;
+    heap->address_bits = options->address_bits;
 #ifdef GRHEAP_RELOCATE
     heap->relocate = options->relocate;
 #endif
@@ -119,6 +122,7 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->auto_collect = true;
     heap->torture = grheap_env_torture();
     heap->verify = grheap_env_verify();
+    heap->address_bits = (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS;
 #ifdef GRHEAP_RELOCATE
     heap->relocate = grheap_env_relocate();
 #endif
@@ -175,5 +179,67 @@ GRHEAP_Result grheap_stats(
     return GRHEAP_ERR_INVALID;
   }
   *out_stats = heap->stats;
+  return GRHEAP_OK;
+}
+
+unsigned grheap_address_bits(const GRHEAP_Heap * heap) {
+  return heap == NULL ? 0u : heap->address_bits;
+}
+
+bool grheap_attach_valid(const GRHEAP_Attach * attach) {
+  return attach != NULL && attach->size >= sizeof(GRHEAP_Attach) &&
+      attach->address_bits >= 16u && attach->address_bits <= 64u;
+}
+
+GRHEAP_Result grheap_attach_check(const GRHEAP_Heap * heap,
+    const GRHEAP_Attach * attach, GRHEAP_AttachReason * out_reason) {
+  GRHEAP_AttachReason reason = GRHEAP_ATTACH_OK;
+  if (out_reason != NULL) {
+    *out_reason = reason;
+  }
+  if (heap == NULL || !grheap_attach_valid(attach)) {
+    return GRHEAP_ERR_INVALID;
+  }
+  if (heap->address_bits > attach->address_bits) {
+    reason = GRHEAP_ATTACH_ADDRESS_RANGE;
+  } else if (attach->modes != 0) {
+    unsigned bit = heap->mode == GRHEAP_MODE_ARENA ? GRHEAP_ATTACH_MODE_ARENA
+                                                  : GRHEAP_ATTACH_MODE_COLLECTED;
+    if ((attach->modes & bit) == 0) {
+      reason = GRHEAP_ATTACH_MODE;
+    }
+  }
+  if (out_reason != NULL) {
+    *out_reason = reason;
+  }
+  return reason == GRHEAP_ATTACH_OK ? GRHEAP_OK : GRHEAP_ERR_UNSUPPORTED;
+}
+
+GRHEAP_Result grheap_gc_point(GRHEAP_Heap * heap, GRHEAP_GcPointKind kind) {
+  if (!grheap_usable(heap) || heap->busy != 0 ||
+      (unsigned)kind <= (unsigned)GRHEAP_GC_POINT_POLL ||
+      (unsigned)kind >= (unsigned)GRHEAP_GC_POINT_KIND_COUNT) {
+    return GRHEAP_ERR_INVALID;
+  }
+  heap->gc_seen[kind]++;
+  if (heap->torture && heap->mode == GRHEAP_MODE_COLLECTED) {
+    heap->gc_acted[kind]++;
+    heap->stats.torture_collections++;
+    grheap_collect_now(heap);
+  }
+  return GRHEAP_OK;
+}
+
+GRHEAP_Result grheap_gc_point_counts(const GRHEAP_Heap * heap,
+    GRHEAP_GcPointKind kind, uint64_t * out_seen, uint64_t * out_acted) {
+  if (heap == NULL || (unsigned)kind >= (unsigned)GRHEAP_GC_POINT_KIND_COUNT) {
+    return GRHEAP_ERR_INVALID;
+  }
+  if (out_seen != NULL) {
+    *out_seen = heap->gc_seen[kind];
+  }
+  if (out_acted != NULL) {
+    *out_acted = heap->gc_acted[kind];
+  }
   return GRHEAP_OK;
 }

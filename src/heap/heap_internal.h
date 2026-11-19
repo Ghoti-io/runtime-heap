@@ -191,6 +191,7 @@ struct GRHEAP_Options {
   bool auto_collect;
   bool torture;
   GRHEAP_Verify verify;
+  unsigned address_bits;
 #ifdef GRHEAP_RELOCATE
   bool relocate;
 #endif
@@ -241,6 +242,9 @@ struct GRHEAP_Heap {
 
   bool torture;                       ///< Collect at every GC point.
   GRHEAP_Verify verify;               ///< Barrier-verify mode.
+  unsigned address_bits;              ///< Every block lies below 2^address_bits.
+  uint64_t gc_seen[8];                ///< GC points seen, by GRHEAP_GcPointKind.
+  uint64_t gc_acted[8];               ///< Those a torture mode acted on.
   GRHEAP_ShadowEntry * shadow;        ///< Open-addressing table, or NULL.
   size_t shadow_cap;                  ///< A power of two, or 0.
   size_t shadow_count;

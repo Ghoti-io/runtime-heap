@@ -160,6 +160,40 @@ GRHEAP_API GRHEAP_Result grheap_options_set_mode(
 GRHEAP_API GRHEAP_Mode grheap_options_get_mode(const GRHEAP_Options * options);
 
 /**
+ * @brief The default address limit, in bits: 48 where a pointer is eight
+ *   bytes (what a user-space address of any supported system fits in) and 32
+ *   where it is four.
+ */
+#define GRHEAP_DEFAULT_ADDRESS_BITS (sizeof(void *) == 8 ? 48u : 32u)
+
+/**
+ * @brief Sets how many address bits every object of the heap fits in.
+ *
+ * The heap takes its blocks from the context's page provider and, when one
+ * lies at or above `2^bits`, returns it and refuses the allocation (it
+ * counts in `address_refusals` and the result is ::GRHEAP_ERR_OOM). So an
+ * engine whose value word encodes only so many address bits can rely on every
+ * object being encodable: it reads the limit with ::grheap_address_bits and
+ * checks it with ::grheap_attach_check. A limit at or above the width of a
+ * pointer imposes nothing.
+ *
+ * @param options The object.
+ * @param bits From 16 up to 64; zero means ::GRHEAP_DEFAULT_ADDRESS_BITS.
+ * @return ::GRHEAP_OK, or ::GRHEAP_ERR_INVALID for NULL or a value outside
+ *   the range. Nothing changes on a refusal.
+ */
+GRHEAP_API GRHEAP_Result grheap_options_set_address_bits(
+    GRHEAP_Options * options, unsigned bits);
+
+/**
+ * @brief The address limit in bits.
+ *
+ * @param options The object.
+ * @return The value, or ::GRHEAP_DEFAULT_ADDRESS_BITS for NULL or unset.
+ */
+GRHEAP_API unsigned grheap_options_get_address_bits(const GRHEAP_Options * options);
+
+/**
  * @brief Sets how words are decoded into addresses (see
  *   ::GRHEAP_ValueCodec).
  *

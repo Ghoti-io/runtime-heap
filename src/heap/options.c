@@ -95,6 +95,7 @@ GRHEAP_Result grheap_options_create(
   o->auto_collect = true;
   o->torture = grheap_env_torture();
   o->verify = grheap_env_verify();
+  o->address_bits = (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS;
 #ifdef GRHEAP_RELOCATE
   o->relocate = grheap_env_relocate();
 #endif
@@ -209,3 +210,16 @@ bool grheap_options_get_relocate(const GRHEAP_Options * options) {
   return options == NULL ? false : options->relocate;
 }
 #endif
+
+GRHEAP_Result grheap_options_set_address_bits(
+    GRHEAP_Options * options, unsigned bits) {
+  if (options == NULL || (bits != 0 && (bits < 16u || bits > 64u))) {
+    return GRHEAP_ERR_INVALID;
+  }
+  options->address_bits = bits == 0 ? (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS : bits;
+  return GRHEAP_OK;
+}
+
+unsigned grheap_options_get_address_bits(const GRHEAP_Options * options) {
+  return options == NULL ? (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS : options->address_bits;
+}

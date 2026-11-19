@@ -209,6 +209,32 @@ already carries the codec in force, so the call overrides it for one slot and
 costs the mark loop nothing beyond `grheap_trace_word`. An image records the
 codec of such a slot in a table of its own and rebuilds the word with it.
 
+## Attaching an engine, and the GC points an engine declares
+
+**An address limit the heap enforces.** An engine's value word encodes only so
+many address bits (a NaN-boxed word 48, a compressed one fewer), and an object
+the word cannot name would be a silent corruption. The heap therefore takes an
+`address_bits` option (default 48 where a pointer is eight bytes, 32 where it
+is four), and when the page provider gives a block that reaches `2^address_bits`
+the heap returns it and refuses the allocation, counting it in
+`address_refusals`. An engine reads the limit with `grheap_address_bits` and,
+before it uses a heap the host made, calls `grheap_attach_check` with the bits
+it encodes and the modes it runs in: a heap whose limit exceeds the engine's
+bits, or whose mode is not one the engine runs in, is refused by name
+(`ATTACH_ADDRESS_RANGE`, `ATTACH_MODE`), and the check changes nothing either
+way. An engine attaches by using the heap; the check is what makes the refusal
+early and explicit.
+
+**GC points.** A torture mode collects at every GC point, and an engine has GC
+points the heap does not see: a call out of guest code, a frame push, a nested
+activation, a poll the heap's handler does not run. `grheap_gc_point(heap,
+kind)` declares one. Under a torture mode it collects (and under relocation
+torture moves what it may); otherwise it does nothing. The heap counts, per
+kind, the points it saw and the points a mode acted on, including its own
+allocation and poll points, so an engine's gate can fail when a kind it has
+reports zero acted. Declaring a point from inside `trace`, `destroy` or
+`cleared` is refused.
+
 ## Precise slots and conservative ranges
 
 A precise slot must decode to the *exact start* of a live payload. Anything

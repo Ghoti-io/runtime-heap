@@ -155,6 +155,8 @@ struct GRHEAP_Tracer {
   struct GRHEAP_Take * take; ///< IMAGE: the take in progress.
   unsigned char * base;     ///< IMAGE: the copy of the payload being walked.
   size_t size;              ///< IMAGE, FORGET: its size.
+  bool codec_explicit;      ///< `codec` was given for one slot by
+                            ///< grheap_trace_word_with, not by the type.
   const GRHEAP_ValueCodec * codec; ///< The codec of the encoded words this
                             ///< tracer is shown: the walked object's type's,
                             ///< else the heap's. Set where the tracer is made.

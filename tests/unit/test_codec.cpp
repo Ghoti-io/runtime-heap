@@ -451,6 +451,119 @@ TEST_F(CodecTest, AnImageIsRefusedWhenADestinationRootSourceDisagreesAndNothingI
   EXPECT_EQ(grheap_image_instantiate(ok.w.heap, t.image, &env), GRHEAP_OK);
 }
 
+// ---- a codec per slot ------------------------------------------------------
+
+namespace {
+
+// A third engine's word, shifted so that no other codec's encoding of the same
+// address is equal to it: a reference is `(address << 4) | 5`.
+const GRHEAP_ValueCodec kZ = {0xF, 0x5, ~UINT64_C(0xF), 4, 0};
+uint64_t encZ(const void * p) { return (addr(p) << 4) | 5u; }
+uint64_t immZ(uint64_t n) { return (n << 4) | 6u; }
+
+// A Y cell whose slot b holds a Z word directly: a reference or an immediate
+// of the other engine, with no box.
+void mixed_trace(GRHEAP_Tracer * t, void * payload) {
+  auto * c = static_cast<Cell *>(payload);
+  grheap_trace_word(t, &c->a);                 // the type's codec (Y)
+  grheap_trace_word_with(t, &c->b, &kZ);       // this slot's own (Z)
+}
+const GRHEAP_Type kMixed = GRHEAP_TYPE_INIT_CODEC(
+    "mixed", sizeof(Cell), mixed_trace, nullptr, nullptr, nullptr, nullptr, &kY);
+// The control: the same layout with slot b reported by the type's codec.
+const GRHEAP_Type kMixedPlain = GRHEAP_TYPE_INIT_CODEC(
+    "mixed", sizeof(Cell), cell_trace, nullptr, nullptr, nullptr, nullptr, &kY);
+
+}  // namespace
+
+TEST_F(CodecTest, ASlotWithItsOwnCodecHoldsAnotherEnginesWordsWithNoBox) {
+  HeapWorld w;
+  Slots ry;
+  ry.words.assign(1, 0);
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kSourceY, &ry), GRCORE_OK);
+  Cell * m = make(w.heap, &kMixed, 1);
+  ry.words[0] = encY(m);
+  Cell * x1 = make(w.heap, &kCellX, 2);
+  m = reinterpret_cast<Cell *>(ry.words[0] & kY.mask);
+  put(w.heap, m, &Cell::b, encZ(x1));   // an X reference in a Y cell's slot b
+  put(w.heap, m, &Cell::a, immY_looks_like_x(4));
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(w.stats().invalid_pointers, 0u);
+  EXPECT_EQ(w.stats().live_objects, 2u) << "the X cell is kept by the X word in slot b";
+  m = reinterpret_cast<Cell *>(ry.words[0] & kY.mask);
+  EXPECT_TRUE(holds(w, m->b, kZ, 2));
+  // An X immediate in slot b is left alone, even one a Y decode would take.
+  put(w.heap, m, &Cell::b, immZ(8));
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(w.stats().invalid_pointers, 0u);
+  EXPECT_EQ(w.stats().live_objects, 1u);
+}
+
+TEST_F(CodecTest, AControlReportingTheSameSlotByTheTypesCodecLosesTheCell) {
+  HeapWorld w;
+  Slots ry;
+  ry.words.assign(1, 0);
+  ASSERT_EQ(grcore_context_add_root_source(w.ctx, &kSourceY, &ry), GRCORE_OK);
+  Cell * m = make(w.heap, &kMixedPlain, 1);
+  ry.words[0] = encY(m);
+  Cell * x1 = make(w.heap, &kCellX, 2);
+  m = reinterpret_cast<Cell *>(ry.words[0] & kY.mask);
+  put(w.heap, m, &Cell::b, encZ(x1));
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(w.stats().live_objects, 1u) << "Y cannot read the X word, so the X cell died";
+}
+
+TEST_F(CodecTest, ANullOrMalformedCodecForASlotIsIgnoredNotUsed) {
+  static const GRHEAP_ValueCodec bad = {0, 0, ~UINT64_C(0), 64, 0};
+  struct Probe {
+    static void trace(GRHEAP_Tracer * t, void * p) {
+      auto * c = static_cast<Cell *>(p);
+      grheap_trace_word_with(t, &c->a, nullptr);
+      grheap_trace_word_with(t, &c->b, &bad);
+    }
+  };
+  static const GRHEAP_Type probe = GRHEAP_TYPE_INIT("probe", sizeof(Cell), Probe::trace,
+      nullptr, nullptr, nullptr, nullptr);
+  HeapWorld w;
+  void * root = nullptr;
+  ASSERT_EQ(grheap_root_add(w.heap, &root), GRHEAP_OK);
+  ASSERT_EQ(grheap_alloc(w.heap, &probe, &root), GRHEAP_OK);
+  Cell * other = make(w.heap, &kCellX, 2);
+  auto * c = static_cast<Cell *>(root);
+  put(w.heap, c, &Cell::a, addr(other));
+  ASSERT_EQ(grheap_collect(w.heap), GRHEAP_OK);
+  EXPECT_EQ(w.stats().live_objects, 1u) << "nothing was reported, so the other cell was not kept";
+  grheap_trace_word_with(nullptr, nullptr, nullptr);  // and a NULL tracer is harmless
+}
+
+TEST_F(CodecTest, AnImageRecordsASlotsOwnCodecAndRebuildsTheWordWithIt) {
+  TwoEngineWorld src(&kSourceX, &kSourceY);
+  Cell * m = make(src.w.heap, &kMixed, 1);
+  src.ry.words[0] = encY(m);
+  Cell * x1 = make(src.w.heap, &kCellX, 2);
+  src.rx.words[0] = encX(x1);
+  m = reinterpret_cast<Cell *>(src.ry.words[0] & kY.mask);
+  put(src.w.heap, m, &Cell::b, encZ(x1));
+  put(src.w.heap, m, &Cell::a, immY_looks_like_x(3));
+  Taken t;
+  ASSERT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+
+  TwoEngineWorld dst(&kSourceX, &kSourceY);
+  const GRHEAP_Type * table[] = {&kMixed, &kCellX, nullptr};
+  GRHEAP_RestoreEnv env = GRHEAP_RESTORE_ENV_INIT(nullptr, nullptr);
+  env.resolve = resolve_cells;
+  env.user = table;
+  ASSERT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
+  ASSERT_TRUE(holds(dst.w, dst.ry.words[0], kY, 1));
+  const Cell * dm = reinterpret_cast<const Cell *>(dst.ry.words[0] & kY.mask);
+  const Cell * dx = reinterpret_cast<const Cell *>(dst.rx.words[0] & kX.mask);
+  EXPECT_EQ(dm->b, encZ(dx)) << "slot b is rebuilt as a Z word, not a Y one";
+  EXPECT_EQ(dm->a, immY_looks_like_x(3));
+  ASSERT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);
+  EXPECT_EQ(dst.w.stats().live_objects, 2u);
+  EXPECT_EQ(dst.w.stats().invalid_pointers, 0u);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

@@ -204,6 +204,7 @@
 #define grheap_take_cell GHOTIIO_RUNTIME_HEAP(grheap_take_cell)
 #define grheap_trace_slot GHOTIIO_RUNTIME_HEAP(grheap_trace_slot)
 #define grheap_trace_word GHOTIIO_RUNTIME_HEAP(grheap_trace_word)
+#define grheap_trace_word_with GHOTIIO_RUNTIME_HEAP(grheap_trace_word_with)
 #define grheap_type_of GHOTIIO_RUNTIME_HEAP(grheap_type_of)
 #define grheap_type_valid GHOTIIO_RUNTIME_HEAP(grheap_type_valid)
 #define grheap_unpin GHOTIIO_RUNTIME_HEAP(grheap_unpin)

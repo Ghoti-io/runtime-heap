@@ -70,7 +70,8 @@ typedef struct ImgHeader {
   uint64_t version;
   uint64_t next_id;
   uint64_t nobjects, ntypes, nroots, nslots;
-  uint64_t types_off, objects_off, slots_off, roots_off;
+  uint64_t types_off, objects_off, slots_off, codecs_off, roots_off;
+  uint64_t ncodecs;
   uint64_t data_off, extra_off, strings_off;
   uint64_t total;
 } ImgHeader;
@@ -102,8 +103,9 @@ typedef struct ImgObject {
 typedef struct ImgSlot {
   uint32_t offset; /* in the payload */
   uint32_t target; /* an object index */
-  uint32_t kind;   /* 0: a raw pointer; 1: an encoded word */
-  uint32_t pad;
+  uint32_t kind;   /* 0: a raw pointer; 1: an encoded word in its type's codec;
+                      2: an encoded word in the codec table's entry `codec` */
+  uint32_t codec;
 } ImgSlot;
 
 typedef struct ImgRoot {
@@ -112,7 +114,7 @@ typedef struct ImgRoot {
   ImgCodec codec;       /* what the root source's slot was taken under */
 } ImgRoot;
 
-enum { SLOT_RAW = 0, SLOT_WORD = 1 };
+enum { SLOT_RAW = 0, SLOT_WORD = 1, SLOT_WORD_CODEC = 2 };
 
 struct GRHEAP_Image {
   GRHEAP_Allocator allocator; /* a copy: the image outlives its caller's */
@@ -265,6 +267,9 @@ typedef struct GRHEAP_Take {
 
   ImgSlot * slots;
   size_t nslots, slots_cap;
+
+  ImgCodec * codecs; /* the explicit-codec slots' codecs, without repeats */
+  size_t ncodecs, codecs_cap;
 
   ImgRoot * roots;
   size_t nroots, roots_cap;
@@ -466,6 +471,26 @@ static WordKind classify(const GRHEAP_Heap * heap,
   return WORD_OBJECT;
 }
 
+/* The index of `c` in the take's codec table, adding it. UINT32_MAX after a
+ * failure. */
+static uint32_t take_codec(GRHEAP_Take * t, const GRHEAP_ValueCodec * c) {
+  ImgCodec want = img_codec(c);
+  for (size_t i = 0; i < t->ncodecs; i++) {
+    if (memcmp(&t->codecs[i], &want, sizeof want) == 0) {
+      return (uint32_t)i;
+    }
+  }
+  void * grown = array_reserve(
+      t->a, t->codecs, &t->codecs_cap, t->ncodecs, sizeof *t->codecs);
+  if (grown == NULL) {
+    take_fail(t, GRHEAP_ERR_OOM);
+    return UINT32_MAX;
+  }
+  t->codecs = grown;
+  t->codecs[t->ncodecs] = want;
+  return (uint32_t)t->ncodecs++;
+}
+
 void grheap_image_trace(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
   GRHEAP_Take * t = tracer->take;
   if (t->failure != GRHEAP_OK) {
@@ -506,8 +531,16 @@ void grheap_image_trace(GRHEAP_Tracer * tracer, void * slot, bool encoded) {
       return;
     }
     t->slots = slots;
-    t->slots[t->nslots++] = (ImgSlot){(uint32_t)(s - b), target,
-        encoded ? SLOT_WORD : SLOT_RAW, 0};
+    uint32_t kind = encoded ? SLOT_WORD : SLOT_RAW;
+    uint32_t codec_index = 0;
+    if (encoded && tracer->codec_explicit) {
+      codec_index = take_codec(t, c);
+      if (codec_index == UINT32_MAX) {
+        return;
+      }
+      kind = SLOT_WORD_CODEC;
+    }
+    t->slots[t->nslots++] = (ImgSlot){(uint32_t)(s - b), target, kind, codec_index};
   }
   /* An object slot and a stale one are both cleared in the copy: a stale one
    * names nothing live, and an address must not be in an image. */
@@ -665,6 +698,7 @@ static void take_free(GRHEAP_Take * t) {
   a->free_fn(a->ctx, t->table);
   a->free_fn(a->ctx, (void *)t->types);
   a->free_fn(a->ctx, t->slots);
+  a->free_fn(a->ctx, t->codecs);
   a->free_fn(a->ctx, t->roots);
   a->free_fn(a->ctx, t->data.p);
   a->free_fn(a->ctx, t->extra.p);
@@ -693,6 +727,9 @@ static GRHEAP_Result take_assemble(GRHEAP_Take * t, GRHEAP_Image ** out) {
   cursor += t->nobjs * sizeof(ImgObject);
   h.slots_off = cursor;
   cursor += t->nslots * sizeof(ImgSlot);
+  h.codecs_off = cursor;
+  h.ncodecs = t->ncodecs;
+  cursor += t->ncodecs * sizeof(ImgCodec);
   h.roots_off = cursor;
   cursor += t->nroots * sizeof(ImgRoot);
   h.strings_off = cursor;
@@ -725,6 +762,9 @@ static GRHEAP_Result take_assemble(GRHEAP_Take * t, GRHEAP_Image ** out) {
   }
   if (t->nslots != 0) {
     memcpy(b + h.slots_off, t->slots, t->nslots * sizeof(ImgSlot));
+  }
+  if (t->ncodecs != 0) {
+    memcpy(b + h.codecs_off, t->codecs, t->ncodecs * sizeof(ImgCodec));
   }
   if (t->nroots != 0) {
     memcpy(b + h.roots_off, t->roots, t->nroots * sizeof(ImgRoot));
@@ -802,7 +842,7 @@ static bool read_header(const unsigned char * bytes, size_t size, ImgHeader * h)
   /* Every section inside the block, in order, aligned. The counts are checked
    * against the room each section has, which also bounds every product. */
   uint64_t offsets[] = {h->types_off, h->objects_off, h->slots_off,
-      h->roots_off, h->strings_off, h->data_off, h->extra_off, h->total};
+      h->codecs_off, h->roots_off, h->strings_off, h->data_off, h->extra_off, h->total};
   uint64_t floor = align8(sizeof *h);
   for (size_t i = 0; i < sizeof offsets / sizeof offsets[0]; i++) {
     if (offsets[i] < floor || offsets[i] > h->total || (offsets[i] & 7u) != 0) {
@@ -812,7 +852,8 @@ static bool read_header(const unsigned char * bytes, size_t size, ImgHeader * h)
   }
   if (h->ntypes > (h->objects_off - h->types_off) / sizeof(ImgType) ||
       h->nobjects > (h->slots_off - h->objects_off) / sizeof(ImgObject) ||
-      h->nslots > (h->roots_off - h->slots_off) / sizeof(ImgSlot) ||
+      h->nslots > (h->codecs_off - h->slots_off) / sizeof(ImgSlot) ||
+      h->ncodecs > (h->roots_off - h->codecs_off) / sizeof(ImgCodec) ||
       h->nroots > (h->strings_off - h->roots_off) / sizeof(ImgRoot) ||
       h->nobjects >= UINT32_MAX) {
     return false;
@@ -842,6 +883,24 @@ static ImgSlot view_slot(const View * v, size_t i) {
   ImgSlot s;
   memcpy(&s, v->bytes + v->h.slots_off + i * sizeof s, sizeof s);
   return s;
+}
+
+/* A codec table entry the slot names, which must exist and be well formed:
+ * the image is hostile input until it is checked. */
+static bool view_codec_ok(const View * v, uint32_t index) {
+  if (index >= v->h.ncodecs) {
+    return false;
+  }
+  ImgCodec c;
+  memcpy(&c, v->bytes + v->h.codecs_off + (size_t)index * sizeof c, sizeof c);
+  return c.shift < 64u && (c.tag_value & ~c.tag_mask) == 0;
+}
+
+static GRHEAP_ValueCodec view_codec(const View * v, uint32_t index) {
+  ImgCodec c;
+  memcpy(&c, v->bytes + v->h.codecs_off + (size_t)index * sizeof c, sizeof c);
+  GRHEAP_ValueCodec r = {c.tag_mask, c.tag_value, c.mask, (unsigned)c.shift, c.base};
+  return r;
 }
 
 static ImgRoot view_root(const View * v, size_t i) {
@@ -988,7 +1047,8 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     for (uint64_t k = 0; k < o.nslots; k++) {
       ImgSlot s = view_slot(v, (size_t)(o.slots_first + k));
       if (s.target >= v->h.nobjects || s.offset > o.size ||
-          o.size - s.offset < 8u || s.kind > SLOT_WORD) {
+          o.size - s.offset < 8u || s.kind > SLOT_WORD_CODEC ||
+          (s.kind == SLOT_WORD_CODEC && !view_codec_ok(v, s.codec))) {
         r = GRHEAP_ERR_CORRUPT;
         break;
       }
@@ -1119,9 +1179,14 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
       uint64_t address = (uint64_t)(uintptr_t)pending->addrs[s.target];
       uint64_t word;
       memcpy(&word, payload + s.offset, sizeof word);
-      word = s.kind == SLOT_RAW
-          ? address
-          : encode_word(grheap_type_codec(heap, types[o.type]), word, address);
+      if (s.kind == SLOT_RAW) {
+        word = address;
+      } else if (s.kind == SLOT_WORD_CODEC) {
+        GRHEAP_ValueCodec own = view_codec(v, s.codec);
+        word = encode_word(&own, word, address);
+      } else {
+        word = encode_word(grheap_type_codec(heap, types[o.type]), word, address);
+      }
       memcpy(payload + s.offset, &word, sizeof word);
     }
   }

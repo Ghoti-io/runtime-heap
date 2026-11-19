@@ -247,6 +247,20 @@ void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
   }
 }
 
+void grheap_trace_word_with(
+    GRHEAP_Tracer * tracer, uint64_t * slot, const GRHEAP_ValueCodec * codec) {
+  if (tracer == NULL || slot == NULL || !grcore_value_codec_valid(codec)) {
+    return;
+  }
+  const GRHEAP_ValueCodec * saved = tracer->codec;
+  bool saved_explicit = tracer->codec_explicit;
+  tracer->codec = codec;
+  tracer->codec_explicit = true;
+  grheap_trace_word(tracer, slot);
+  tracer->codec = saved;
+  tracer->codec_explicit = saved_explicit;
+}
+
 static void visit_slot(void * user, uint64_t * slot) {
   GRHEAP_Heap * heap = user;
   uint64_t address;

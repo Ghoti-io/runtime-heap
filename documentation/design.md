@@ -200,10 +200,14 @@ position uses another: the words it would write would not be the ones the
 objects were taken with. The image carries no codec of the heap itself, since
 nothing in it is decoded by one.
 
-The codec is not carried per slot within a type. A slot of one engine's type
-that must hold another engine's *reference* holds it in its own engine's
-encoding; one that must hold another engine's *immediate* (a number) holds it
-through a one-word box object of its own.
+The codec can also be named for one slot. A `trace` function that reports a
+slot with `grheap_trace_word_with(tracer, slot, codec)` has that slot decoded,
+rewritten and imaged with the codec it names and not the type's. That is how an
+object of one engine holds another engine's words, a reference or an immediate,
+directly in a slot, with no one-word box object per immediate. The tracer
+already carries the codec in force, so the call overrides it for one slot and
+costs the mark loop nothing beyond `grheap_trace_word`. An image records the
+codec of such a slot in a table of its own and rebuilds the word with it.
 
 ## Precise slots and conservative ranges
 

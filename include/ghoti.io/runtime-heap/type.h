@@ -349,6 +349,27 @@ GRHEAP_API void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot);
  */
 GRHEAP_API void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot);
 
+/**
+ * @brief Reports a slot that holds an encoded value in a codec other than the
+ *   one of the object's type: the slot's own.
+ *
+ * As ::grheap_trace_word, but the word is decoded (and, when an object moves,
+ * rewritten) with `codec` instead of the type's. It is how an object of one
+ * engine holds another engine's value words directly, a reference or an
+ * immediate, with no box object: the slot is of that engine's kind, and the
+ * type says so at each call. Every mode of the heap honors it, a heap image
+ * records the codec of such a slot and rebuilds the word with it, and it costs the mark loop nothing
+ * beyond ::grheap_trace_word.
+ *
+ * @param tracer The tracer given to the `trace` function. NULL is ignored.
+ * @param slot The address of the slot. NULL is ignored.
+ * @param codec A valid codec (grcore_value_codec_valid) that outlives the
+ *   call. NULL or an invalid one is ignored: the slot is not reported, which
+ *   is a defect the caller sees as a lost object.
+ */
+GRHEAP_API void grheap_trace_word_with(
+    GRHEAP_Tracer * tracer, uint64_t * slot, const GRHEAP_ValueCodec * codec);
+
 #ifdef __cplusplus
 }
 #endif

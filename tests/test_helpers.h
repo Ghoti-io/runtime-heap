@@ -103,6 +103,10 @@ struct FakePages {
   long fail_next = 0;
   long maps = 0;
   long live = 0;
+  // A page granule to report (zero: the system's). A map request that is not
+  // a whole number of granules is counted, which is the heap's geometry gate.
+  size_t granule = 0;
+  long misaligned = 0;
 
   FakePages(const FakePages &) = delete;
   FakePages & operator=(const FakePages &) = delete;
@@ -111,6 +115,9 @@ struct FakePages {
     vtable.page_size = grcore_page_provider_default()->page_size;
     vtable.map = [](void * c, size_t n) -> void * {
       auto * f = static_cast<FakePages *>(c);
+      if (f->granule != 0 && n % f->granule != 0) {
+        f->misaligned++;
+      }
       if (f->fail) {
         return nullptr;
       }
@@ -144,6 +151,7 @@ struct WorldConfig {
   uint64_t memory = GRCORE_UNLIMITED;
   uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE;
   bool create_heap = true;
+  size_t granule = 0;  // the page provider's reported granule (zero: the system's)
   // -1 leaves the instrument at what the environment says (GRHEAP_TORTURE,
   // GRHEAP_VERIFY, which `make test-torture` sets); 0 and 1 (verify: 0 off,
   // 1 count, 2 abort) are explicit and win. A test that asserts exactly when a
@@ -194,6 +202,10 @@ struct HeapWorld {
     EXPECT_EQ(grcore_options_create(nullptr, &o), GRCORE_OK);
     grcore_options_set_memory_bytes(o, config.memory);
     grcore_options_set_memory_reserve(o, config.reserve);
+    if (config.granule != 0) {
+      pages.granule = config.granule;
+      pages.vtable.page_size = config.granule;
+    }
     EXPECT_EQ(grcore_group_create(allocator.get(), &pages.vtable, &group),
         GRCORE_OK);
     EXPECT_EQ(grcore_context_create(group, o, &ctx), GRCORE_OK);

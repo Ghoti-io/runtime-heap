@@ -252,6 +252,14 @@ void grheap_trace_word_with(
   if (tracer == NULL || slot == NULL || !grcore_value_codec_valid(codec)) {
     return;
   }
+  if (tracer->mode == GRHEAP_TRACE_MARK) {
+    /* The hot path: no state to save, the word is decoded where it is. */
+    uint64_t address;
+    if (grheap_decode_with(codec, *slot, &address)) {
+      mark_precise(tracer->heap, address);
+    }
+    return;
+  }
   const GRHEAP_ValueCodec * saved = tracer->codec;
   bool saved_explicit = tracer->codec_explicit;
   tracer->codec = codec;

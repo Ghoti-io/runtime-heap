@@ -209,6 +209,21 @@ already carries the codec in force, so the call overrides it for one slot and
 costs the mark loop nothing beyond `grheap_trace_word`. An image records the
 codec of such a slot in a table of its own and rebuilds the word with it.
 
+**Weak cells and ephemerons in an image.** A weak slot is not a strong
+reference, so what it names is in the image only if something else reaches it.
+A take walks the strong closure first, then resolves each weak object's slots
+against it: a weak cell whose target is in the image keeps its slot as a
+record, one whose target is not is written cleared (word zero), as a collection
+would have cleared it. An ephemeron's value is carried only while its key is,
+or when its key is an immediate; a null or stale key clears both. A carried
+value can reach more keys, so the resolution runs to a fixpoint. The records
+are placed after each object's strong ones so an object's slots stay one range.
+A restore registers the weak objects it makes (and shadows their weak slots for
+barrier-verify), so the first collection judges them like any other; a failed
+restore drops their registry entries with the objects. No `cleared` callback
+runs at take or restore, and a destination type with a weak spec is accepted
+when its slots lie inside the payload and refused when they do not.
+
 ## Attaching an engine, and the GC points an engine declares
 
 **An address limit the heap enforces.** An engine's value word encodes only so
@@ -1133,8 +1148,7 @@ been run: it was checked only for being valid YAML that names these jobs.
 ## What is not here
 
 No byte format or file for a heap image, and no sharing of one between
-processes (an image is an in-memory object). No image of a heap with a weak
-cell, an ephemeron, a C root, a handle, a pin or a conservative range. No image
+processes (an image is an in-memory object). No image of a heap with a C root, a handle, a pin or a conservative range. No image
 that follows a slot outside its object's payload. No moving collector (the test-only relocation torture moves, to find what one would break), no generations, no concurrent or incremental marking, and no stack
 scanning of its own: a stack's words come from a root source, the embedder's or
 A's. (The relocation torture moves objects in a test-only build; it is not a

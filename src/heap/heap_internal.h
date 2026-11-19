@@ -586,6 +586,10 @@ GRHEAP_INTERNAL_API void grheap_weak_each_slot(const GRHEAP_Type * type,
 /** Empties the registry (arena reset). */
 GRHEAP_INTERNAL_API void grheap_weak_free(GRHEAP_Heap * heap);
 
+/** Drops the registry entries of objects whose mark bit is clear: what a
+ *  failed restore leaves, before it sweeps the objects away. */
+GRHEAP_INTERNAL_API void grheap_weak_drop_unmarked(GRHEAP_Heap * heap);
+
 /* ---- image.c ---------------------------------------------------------- */
 
 /** An IMAGE-mode tracer reports a slot (encoded: a codec word; else a raw

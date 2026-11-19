@@ -482,3 +482,16 @@ void grheap_weak_free(GRHEAP_Heap * heap) {
   heap->nweak = 0;
   heap->weak_cap = 0;
 }
+
+void grheap_weak_drop_unmarked(GRHEAP_Heap * heap) {
+  size_t kept = 0;
+  for (size_t e = 0; e < heap->nweak; e++) {
+    GRHEAP_Span * s;
+    size_t i;
+    if (grheap_locate(heap, (uintptr_t)heap->weak[e].object, true, &s, &i) &&
+        grheap_bit_get(s->mark, i)) {
+      heap->weak[kept++] = heap->weak[e];
+    }
+  }
+  heap->nweak = kept;
+}

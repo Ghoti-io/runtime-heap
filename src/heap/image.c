@@ -250,6 +250,11 @@ static void * array_reserve(const GRHEAP_Allocator * a, void * array,
   return grown;
 }
 
+typedef struct TakeWeakSlot {
+  uint32_t object; /* whose slot */
+  ImgSlot slot;
+} TakeWeakSlot;
+
 typedef struct GRHEAP_Take {
   GRHEAP_Heap * heap;
   const GRHEAP_Allocator * a;
@@ -270,6 +275,12 @@ typedef struct GRHEAP_Take {
 
   ImgCodec * codecs; /* the explicit-codec slots' codecs, without repeats */
   size_t ncodecs, codecs_cap;
+
+  /* Weak slots, resolved after the strong closure is known (RH-7). */
+  struct TakeWeakSlot * wslots;
+  size_t nwslots, wslots_cap;
+  unsigned char * wdone; /* per object: its weak slots are resolved */
+  size_t wdone_cap;
 
   ImgRoot * roots;
   size_t nroots, roots_cap;
@@ -596,7 +607,7 @@ static uint32_t take_type(GRHEAP_Take * t, const GRHEAP_Type * type) {
       return (uint32_t)i;
     }
   }
-  if (type->name == NULL || grheap_type_weak(type) != NULL) {
+  if (type->name == NULL) {
     take_fail(t, GRHEAP_ERR_INVALID);
     return UINT32_MAX;
   }
@@ -691,6 +702,281 @@ static void take_object(GRHEAP_Take * t, size_t i) {
   t->objs[i].extra_len = t->extra.len - t->objs[i].extra_off;
 }
 
+/* ---- weak slots (RH-7) -------------------------------------------------- */
+
+/* A weak slot is not traced, so what it names is in the image only if some
+ * strong path reaches it. After the strong closure, a weak cell whose target is
+ * in the image keeps its slot as a record; one whose target is not is written
+ * cleared (word zero), as a collection would have cleared it. An ephemeron's
+ * value is in the image only while its key is (or is an immediate), which can
+ * add objects whose own references reach more keys, so the resolution runs to
+ * a fixpoint. */
+
+static uint32_t take_find(const GRHEAP_Take * t, const void * payload) {
+  if (t->table_cap == 0) {
+    return UINT32_MAX;
+  }
+  size_t at = address_hash((uintptr_t)payload) & (t->table_cap - 1u);
+  while (t->table[at] != 0) {
+    if (t->payloads[t->table[at] - 1u] == payload) {
+      return t->table[at] - 1u;
+    }
+    at = (at + 1u) & (t->table_cap - 1u);
+  }
+  return UINT32_MAX;
+}
+
+static bool take_wdone_fit(GRHEAP_Take * t) {
+  if (t->wdone_cap >= t->nobjs) {
+    return true;
+  }
+  size_t cap = t->wdone_cap == 0 ? 64u : t->wdone_cap;
+  while (cap < t->nobjs) {
+    cap *= 2u;
+  }
+  unsigned char * grown = t->a->calloc_fn(t->a->ctx, cap, 1);
+  if (grown == NULL) {
+    take_fail(t, GRHEAP_ERR_OOM);
+    return false;
+  }
+  if (t->wdone != NULL) {
+    memcpy(grown, t->wdone, t->wdone_cap);
+    t->a->free_fn(t->a->ctx, t->wdone);
+  }
+  t->wdone = grown;
+  t->wdone_cap = cap;
+  return true;
+}
+
+static uint64_t * take_copy_slot(GRHEAP_Take * t, size_t i, size_t offset) {
+  return (uint64_t *)(void *)(t->data.p + t->objs[i].payload_off + offset);
+}
+
+/* What a weak slot of object `i` holds. */
+typedef enum { WS_NULL, WS_IMMEDIATE, WS_STALE, WS_OBJECT } WeakSlotKind;
+
+static WeakSlotKind take_weak_slot(const GRHEAP_Take * t, size_t i, size_t offset,
+    bool encoded, void ** out_payload) {
+  const GRHEAP_Type * type = t->types[t->objs[i].type];
+  uint64_t word;
+  memcpy(&word, t->data.p + t->objs[i].payload_off + offset, sizeof word);
+  uint64_t address;
+  if (encoded &&
+      !grheap_decode_with(grheap_type_codec(t->heap, type), word, &address)) {
+    return WS_IMMEDIATE;
+  }
+  if (!encoded) {
+    address = word;
+  }
+  if (address == 0) {
+    return WS_NULL;
+  }
+  GRHEAP_Span * span;
+  size_t index;
+  if ((uint64_t)(uintptr_t)address != address ||
+      !grheap_locate(t->heap, (uintptr_t)address, true, &span, &index)) {
+    return WS_STALE;
+  }
+  *out_payload = grheap_payload(span, index);
+  return WS_OBJECT;
+}
+
+/* Records that object `i`'s weak slot at `offset` names image object `target`,
+ * and leaves the copy holding what the restore will rebuild it from. */
+static void take_weak_record(GRHEAP_Take * t, size_t i, size_t offset,
+    bool encoded, uint32_t target) {
+  void * grown = array_reserve(
+      t->a, t->wslots, &t->wslots_cap, t->nwslots, sizeof *t->wslots);
+  if (grown == NULL) {
+    take_fail(t, GRHEAP_ERR_OOM);
+    return;
+  }
+  t->wslots = grown;
+  const GRHEAP_Type * type = t->types[t->objs[i].type];
+  uint64_t * slot = take_copy_slot(t, i, offset);
+  uint64_t template_word = 0;
+  if (encoded) {
+    template_word = *slot & ~grheap_type_codec(t->heap, type)->mask;
+  }
+  t->wslots[t->nwslots++] = (TakeWeakSlot){(uint32_t)i,
+      (ImgSlot){(uint32_t)offset, target, encoded ? SLOT_WORD : SLOT_RAW, 0}};
+  *slot = template_word;
+}
+
+static void take_weak_clear(GRHEAP_Take * t, size_t i, size_t offset) {
+  *take_copy_slot(t, i, offset) = 0;
+}
+
+/* Resolves object `i`'s weak slots if it can be done now. */
+static bool take_weak_resolve(GRHEAP_Take * t, size_t i) {
+  const GRHEAP_WeakSpec * spec = grheap_type_weak(t->types[t->objs[i].type]);
+  void * target = NULL;
+  if (spec->kind == GRHEAP_WEAK_CELL) {
+    switch (take_weak_slot(t, i, spec->target_offset, spec->encoded, &target)) {
+      case WS_OBJECT: {
+        uint32_t index = take_find(t, target);
+        if (index == UINT32_MAX) {
+          return false;
+        }
+        take_weak_record(t, i, spec->target_offset, spec->encoded, index);
+        return true;
+      }
+      case WS_STALE:
+        take_weak_clear(t, i, spec->target_offset);
+        return true;
+      default:
+        return true; /* empty, or an immediate the image keeps as it is */
+    }
+  }
+  /* An ephemeron: the value is kept while the key is, or when the key is an
+   * immediate. A null or stale key clears both, as a collection does. */
+  bool holds = false;
+  switch (take_weak_slot(t, i, spec->key_offset, spec->encoded, &target)) {
+    case WS_IMMEDIATE:
+      holds = true;
+      break;
+    case WS_OBJECT: {
+      uint32_t index = take_find(t, target);
+      if (index == UINT32_MAX) {
+        return false;
+      }
+      take_weak_record(t, i, spec->key_offset, spec->encoded, index);
+      holds = true;
+      break;
+    }
+    case WS_STALE:
+      take_weak_clear(t, i, spec->key_offset);
+      take_weak_clear(t, i, spec->value_offset);
+      return true;
+    case WS_NULL:
+      take_weak_clear(t, i, spec->value_offset);
+      return true;
+  }
+  if (holds) {
+    void * value = NULL;
+    switch (take_weak_slot(t, i, spec->value_offset, spec->encoded, &value)) {
+      case WS_OBJECT: {
+        uint32_t index = take_intern(t, value);
+        if (index == UINT32_MAX) {
+          return true;
+        }
+        take_weak_record(t, i, spec->value_offset, spec->encoded, index);
+        break;
+      }
+      case WS_STALE:
+        take_weak_clear(t, i, spec->value_offset);
+        break;
+      default:
+        break;
+    }
+  }
+  return true;
+}
+
+/* Walks every object the strong closure and the weak rounds discover, then
+ * clears the weak slots whose targets never joined the image. */
+static void take_walk_all(GRHEAP_Take * t) {
+  size_t next = 0;
+  for (;;) {
+    while (next < t->nobjs && t->failure == GRHEAP_OK) {
+      take_object(t, next++);
+    }
+    if (t->failure != GRHEAP_OK || !take_wdone_fit(t)) {
+      return;
+    }
+    bool progress = false;
+    size_t before = t->nobjs;
+    for (size_t i = 0; i < t->nobjs && t->failure == GRHEAP_OK; i++) {
+      if (i >= t->wdone_cap && !take_wdone_fit(t)) {
+        return;
+      }
+      if (t->wdone[i] || grheap_type_weak(t->types[t->objs[i].type]) == NULL) {
+        continue;
+      }
+      if (take_weak_resolve(t, i)) {
+        if (!take_wdone_fit(t)) {
+          return;
+        }
+        t->wdone[i] = 1;
+        progress = true;
+      }
+    }
+    if (t->nobjs != before) {
+      progress = true;
+    }
+    if (!progress) {
+      break;
+    }
+  }
+  for (size_t i = 0; i < t->nobjs; i++) {
+    if (t->wdone[i] || grheap_type_weak(t->types[t->objs[i].type]) == NULL) {
+      continue;
+    }
+    const GRHEAP_WeakSpec * spec = grheap_type_weak(t->types[t->objs[i].type]);
+    if (spec->kind == GRHEAP_WEAK_CELL) {
+      take_weak_clear(t, i, spec->target_offset);
+    } else {
+      take_weak_clear(t, i, spec->key_offset);
+      take_weak_clear(t, i, spec->value_offset);
+    }
+  }
+}
+
+/* Puts each object's weak slot records after its strong ones, so that an
+ * object's slots stay one contiguous range of the table. */
+static void take_merge_weak(GRHEAP_Take * t) {
+  if (t->nwslots == 0) {
+    return;
+  }
+  size_t total = t->nslots + t->nwslots;
+  ImgSlot * merged = t->a->malloc_fn(t->a->ctx, total * sizeof *merged);
+  /* Counting sort of the weak records by object: `start[i]` is where object
+   * i's first weak record goes in `sorted`. */
+  size_t * start = t->a->calloc_fn(t->a->ctx, t->nobjs + 1u, sizeof *start);
+  ImgSlot * sorted = t->a->malloc_fn(t->a->ctx, t->nwslots * sizeof *sorted);
+  if (merged == NULL || start == NULL || sorted == NULL) {
+    t->a->free_fn(t->a->ctx, merged);
+    t->a->free_fn(t->a->ctx, start);
+    t->a->free_fn(t->a->ctx, sorted);
+    take_fail(t, GRHEAP_ERR_OOM);
+    return;
+  }
+  for (size_t k = 0; k < t->nwslots; k++) {
+    start[t->wslots[k].object + 1u]++;
+  }
+  for (size_t i = 0; i < t->nobjs; i++) {
+    start[i + 1u] += start[i];
+  }
+  for (size_t k = 0; k < t->nwslots; k++) {
+    sorted[start[t->wslots[k].object]++] = t->wslots[k].slot;
+  }
+  /* `start[i]` is now the end of object i's weak records. */
+  size_t at = 0;
+  for (size_t i = 0; i < t->nobjs; i++) {
+    size_t first = (size_t)t->objs[i].slots_first;
+    size_t n = t->objs[i].nslots;
+    size_t weak_end = start[i];
+    size_t weak_begin = i == 0 ? 0 : start[i - 1u];
+    if (n != 0) {
+      memcpy(merged + at, t->slots + first, n * sizeof *merged);
+    }
+    t->objs[i].slots_first = at;
+    at += n;
+    size_t w = weak_end - weak_begin;
+    if (w != 0) {
+      memcpy(merged + at, sorted + weak_begin, w * sizeof *merged);
+      at += w;
+      t->objs[i].nslots += (uint32_t)w;
+    }
+  }
+  t->a->free_fn(t->a->ctx, sorted);
+  t->a->free_fn(t->a->ctx, start);
+  t->a->free_fn(t->a->ctx, t->slots);
+  t->slots = merged;
+  t->slots_cap = total;
+  t->nslots = total;
+}
+
 static void take_free(GRHEAP_Take * t) {
   const GRHEAP_Allocator * a = t->a;
   a->free_fn(a->ctx, t->objs);
@@ -699,6 +985,8 @@ static void take_free(GRHEAP_Take * t) {
   a->free_fn(a->ctx, (void *)t->types);
   a->free_fn(a->ctx, t->slots);
   a->free_fn(a->ctx, t->codecs);
+  a->free_fn(a->ctx, t->wslots);
+  a->free_fn(a->ctx, t->wdone);
   a->free_fn(a->ctx, t->roots);
   a->free_fn(a->ctx, t->data.p);
   a->free_fn(a->ctx, t->extra.p);
@@ -791,8 +1079,7 @@ GRHEAP_Result grheap_image_take(GRHEAP_Heap * heap,
    * not own and so cannot rewrite, a keep-alive the destination has no way to
    * recreate, and a slot that is not traced. Refused before anything is
    * walked. */
-  if (heap->nroots != 0 || heap->handles != NULL || heap->stats.pins != 0 ||
-      heap->nweak != 0) {
+  if (heap->nroots != 0 || heap->handles != NULL || heap->stats.pins != 0) {
     return GRHEAP_ERR_INVALID;
   }
   for (size_t i = 0; i < heap->nspans; i++) {
@@ -814,8 +1101,9 @@ GRHEAP_Result grheap_image_take(GRHEAP_Heap * heap,
     take_fail(&t, GRHEAP_ERR_INVALID);
   }
   heap->busy++; /* a hook that allocates in the heap is refused */
-  for (size_t i = 0; r == GRHEAP_OK && t.failure == GRHEAP_OK && i < t.nobjs; i++) {
-    take_object(&t, i);
+  if (r == GRHEAP_OK) {
+    take_walk_all(&t);
+    take_merge_weak(&t);
   }
   heap->busy--;
   if (r == GRHEAP_OK) {
@@ -969,6 +1257,7 @@ static void remove_objects(GRHEAP_Heap * heap, void ** addrs, size_t count) {
       grheap_bit_clear(s->mark, index);
     }
   }
+  grheap_weak_drop_unmarked(heap);
   grheap_sweep(heap);
 }
 
@@ -1018,7 +1307,7 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
     }
     const GRHEAP_Type * type =
         env->resolve(env->user, (const char *)v->bytes + rec.name_off);
-    if (!grheap_type_valid(type) || grheap_type_weak(type) != NULL) {
+    if (!grheap_type_valid(type)) {
       r = GRHEAP_ERR_INVALID;
       break;
     }
@@ -1038,6 +1327,11 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
         o.extra_len > extra_size - o.extra_off || o.id > v->h.next_id ||
         o.size > SIZE_MAX / 4u) {
       r = GRHEAP_ERR_CORRUPT;
+      break;
+    }
+    if (grheap_type_weak(types[o.type]) != NULL &&
+        !grheap_weak_spec_fits(types[o.type], (size_t)o.size)) {
+      r = GRHEAP_ERR_INVALID; /* a weak slot outside the payload */
       break;
     }
     if (o.extra_len != 0 && grheap_type_restore(types[o.type]) == NULL) {
@@ -1094,11 +1388,20 @@ static GRHEAP_Result validate(GRHEAP_Heap * heap, const View * v,
 
 /* Walks one restored payload in SHADOW mode so that barrier-verify finds every
  * traced slot stored, as the verify instrument requires of a heap object. */
+static void shadow_weak_slot(void * user, const void * slot) {
+  uint64_t word;
+  memcpy(&word, slot, sizeof word);
+  grheap_shadow_set((GRHEAP_Heap *)user, (uintptr_t)slot, word);
+}
+
 static void shadow_object(GRHEAP_Heap * heap, void * payload) {
   const GRHEAP_Type * type = grheap_header(payload)->type;
   if (type->trace != NULL) {
     GRHEAP_Tracer tracer = {.heap = heap, .mode = GRHEAP_TRACE_SHADOW};
     type->trace(&tracer, payload);
+  }
+  if (grheap_type_weak(type) != NULL) {
+    grheap_weak_each_slot(type, payload, shadow_weak_slot, heap);
   }
 }
 
@@ -1189,6 +1492,20 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
       }
       memcpy(payload + s.offset, &word, sizeof word);
     }
+  }
+
+  /* The weak objects join the heap's registry, so the next collection judges
+   * their slots. They are registered before anything that can fail without
+   * undoing it: a failure removes the objects, and the registry entries. */
+  for (size_t i = 0; r == GRHEAP_OK && i < pending->nobjects; i++) {
+    if (grheap_type_weak(types[view_object(v, i).type]) == NULL) {
+      continue;
+    }
+    if (!grheap_weak_reserve(heap)) {
+      r = grheap_failure(heap, refusals);
+      break;
+    }
+    grheap_weak_register(heap, pending->addrs[i]);
   }
 
   /* The types' own host pointers, by name. */

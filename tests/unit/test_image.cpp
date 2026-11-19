@@ -886,9 +886,12 @@ TEST_F(ImageTest, EverythingTheImageCannotCarryRefusesATakeAndChangesNothing) {
     void * p;
     ASSERT_EQ(grheap_alloc(w.w.heap, &kWCell, &p), GRHEAP_OK);
     w.set(0, p);
-    EXPECT_EQ(grheap_image_take(w.w.heap, nullptr, &image), GRHEAP_ERR_INVALID)
+    // A weak cell is carried (RH-7): the image holds it, with its slot cleared.
+    EXPECT_EQ(grheap_image_take(w.w.heap, nullptr, &image), GRHEAP_OK)
         << "a weak cell";
-    EXPECT_EQ(image, nullptr);
+    EXPECT_EQ(grheap_image_object_count(image), 1u);
+    grheap_image_release(image);
+    image = nullptr;
   }
   {
     ImgWorld w(1);
@@ -1006,7 +1009,7 @@ TEST_F(ImageTest, ATypeTheDestinationDoesNotKnowAndABadArgumentRefuseTheRestore)
   EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
 }
 
-TEST_F(ImageTest, ADestinationTypeWithAWeakSpecIsRefused) {
+TEST_F(ImageTest, ADestinationTypeWithAWeakSpecIsRefusedOnlyWhenItsSlotsDoNotFit) {
   ImgWorld src(1);
   Node * n = new_node(src.w.heap, 1, &kPlainNode);
   src.set(0, n);
@@ -1019,8 +1022,21 @@ TEST_F(ImageTest, ADestinationTypeWithAWeakSpecIsRefused) {
                              return &weak_plain;
                            },
       nullptr);
-  EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
-  EXPECT_EQ(dst.w.stats().live_objects, 0u);
+  // A weak spec whose slot fits the payload is accepted: the object is
+  // restored as a weak one, which a collection then judges.
+  ASSERT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
+  ASSERT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);
+  // The spec's slot lies outside this payload: refused, nothing made.
+  ImgWorld dst2(1);
+  static const GRHEAP_WeakSpec outside = {GRHEAP_WEAK_CELL, 4096, 0, 0, false, nullptr};
+  static const GRHEAP_Type weak_outside = GRHEAP_TYPE_INIT("plain", sizeof(Node), nullptr,
+      nullptr, &outside, nullptr, nullptr);
+  GRHEAP_RestoreEnv env2 = GRHEAP_RESTORE_ENV_INIT([](void *, const char *) -> const GRHEAP_Type * {
+                              return &weak_outside;
+                            },
+      nullptr);
+  EXPECT_EQ(grheap_image_instantiate(dst2.w.heap, t.image, &env2), GRHEAP_ERR_INVALID);
+  EXPECT_EQ(dst2.w.stats().live_objects, 0u);
 }
 
 TEST_F(ImageTest, ADifferentValueCodecIsRefusedBeforeAnythingChanges) {

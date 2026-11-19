@@ -52,12 +52,22 @@
  *
  * **What refuses a take.** Each is ::GRHEAP_ERR_INVALID, and nothing changes:
  * a registered root slot (a C pointer the heap cannot rewrite), a handle, a
- * pin, a weak cell or an ephemeron in the heap (any object whose type has a
- * `weak` spec, or any registered one), a conservative range that a root source
+ * pin, a conservative range that a root source
  * reports as non-empty, an object whose type has no name or shares a name with
  * a different type, a slot reported outside its payload, a pointer word that
  * the heap's codec cannot encode back, and a hook that refuses. Roots and
  * stable IDs that name a collected object are not in the image.
+ *
+ * **Weak cells and ephemerons.** A weak slot is not a strong reference, so
+ * what it names is in the image only if something else reaches it. A weak cell
+ * whose target is in the image keeps its slot; one whose target is not is
+ * written cleared (word zero), as a collection would have cleared it. An
+ * ephemeron's value is in the image only while its key is, or when its key is
+ * an immediate; a null key, or one that is not a live object, clears both. The
+ * value can bring objects in that reach other keys, so this is resolved to a
+ * fixpoint. A restore registers the weak objects it makes, so the first
+ * collection judges them like any other; no `cleared` callback runs at take or
+ * restore.
  *
  * **Instantiating.** ::grheap_image_instantiate makes a fresh object for each
  * entry, through the heap's own allocator and the context's memory budget,

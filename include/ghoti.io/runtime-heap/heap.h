@@ -137,6 +137,9 @@ typedef struct GRHEAP_Stats {
                               ///< than it claims.
   uint64_t address_refusals;  ///< Blocks the provider gave above the address
                               ///< limit, returned, and the allocation refused.
+  uint64_t weak_objects;      ///< Weak cells and ephemerons in the heap's weak
+                              ///< registry: allocated or restored, not yet
+                              ///< collected.
 } GRHEAP_Stats;
 
 /** @brief Why an engine was refused (::grheap_attach_check). */

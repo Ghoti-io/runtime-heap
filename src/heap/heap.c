@@ -179,6 +179,7 @@ GRHEAP_Result grheap_stats(
     return GRHEAP_ERR_INVALID;
   }
   *out_stats = heap->stats;
+  out_stats->weak_objects = heap->nweak;
   return GRHEAP_OK;
 }
 

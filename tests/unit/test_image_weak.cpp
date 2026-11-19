@@ -153,6 +153,7 @@ TEST(ImageWeak, AWeakCellWhoseTargetIsReachedElsewhereKeepsItAndIsJudgedAfterThe
   W dst(2);
   GRHEAP_RestoreEnv env = env_for(kTable);
   ASSERT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
+  EXPECT_EQ(dst.w.stats().weak_objects, 1u) << "the restored cell is registered";
   EXPECT_EQ(dst.root<WCell>(0)->target, dst.root<Hold>(1));
   ASSERT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);
   EXPECT_EQ(dst.root<WCell>(0)->target, dst.root<Hold>(1)) << "still reached, so still named";
@@ -295,6 +296,9 @@ TEST(ImageWeak, AFailedRestoreLeavesNoWeakEntryForADeadCell) {
   GRHEAP_RestoreEnv env = env_for(refusing);
   EXPECT_NE(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
   EXPECT_EQ(dst.w.stats().live_objects, 0u);
+  EXPECT_EQ(dst.w.stats().allocations, 2u) << "the failure came after the cells were made";
+  EXPECT_EQ(dst.w.stats().weak_objects, 0u)
+      << "the registry still names a cell the failed restore removed";
   // The registry holds nothing for the removed cell: a collection and a new
   // weak object behave (the sanitizers would see a stale entry).
   ASSERT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);

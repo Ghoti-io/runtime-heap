@@ -307,7 +307,10 @@ TEST_F(VerifyTest, VerifyOffRecordsNothingAndFindsNothing) {
 }
 
 TEST_F(VerifyTest, AbortModeNamesTheTypeAndTheSlotAndAborts) {
-  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+  // The threadsafe style re-executes the binary, which an emulator that runs a foreign
+  // binary cannot do; a run there sets GRHEAP_TEST_DEATH_FAST and takes the fast style.
+  ::testing::FLAGS_gtest_death_test_style =
+      std::getenv("GRHEAP_TEST_DEATH_FAST") != nullptr ? "fast" : "threadsafe";
   EXPECT_DEATH(
       {
         HeapWorld w(verified(GRHEAP_VERIFY_ABORT));

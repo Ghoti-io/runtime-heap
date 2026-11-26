@@ -241,8 +241,10 @@ GRCORE_Result grheap_roots_enumerate(
       return r;
     }
     heap->root_codec = grcore_root_source_codec(source);
+    (void)grcore_context_set_root_codec(context, NULL);
     source->enumerate(context, value, visitor);
   }
   heap->root_codec = NULL;
+  (void)grcore_context_set_root_codec(context, NULL);
   return GRCORE_OK;
 }

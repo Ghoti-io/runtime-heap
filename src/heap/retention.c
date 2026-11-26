@@ -318,11 +318,13 @@ static void enumerate_roots(Retain * r) {
     }
     r->root_source = source->name;
     heap->root_codec = grcore_root_source_codec(source);
+    (void)grcore_context_set_root_codec(heap->context, NULL);
     r->slot_count = 0;
     r->range_count = 0;
     source->enumerate(heap->context, value, &visitor);
   }
   heap->root_codec = NULL;
+  (void)grcore_context_set_root_codec(heap->context, NULL);
   r->root_source = NULL;
 }
 

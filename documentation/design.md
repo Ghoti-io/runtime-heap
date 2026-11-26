@@ -191,6 +191,16 @@ things can name another:
   prepare and commit all read a slot with the codec of the source that reported
   it.
 
+A source that reports slots in more than one encoding says so slot by slot.
+`runtime-core`'s guest stack is one source holding frames of every engine, so
+while it enumerates, the context holds the codec in force for the slot being
+reported (`grcore_context_root_codec`: the frame's engine descriptor's, a
+deoptimization cell's, a handle-table entry's). The heap decodes a precise root
+slot by that codec, else the source's, else the heap's default, in the mark,
+the relocation, the retention walk, mark-step torture and the image; an image
+therefore records a codec per root and is refused by a context whose engine
+states another one.
+
 A codec that is not well formed (a shift of 64 or more, a tag value outside its
 tag mask) makes a type invalid and a root source refused, because every decode
 under it would be undefined. A **heap image** records the codec of each type

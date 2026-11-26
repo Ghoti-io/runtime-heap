@@ -394,9 +394,15 @@ static inline const GRHEAP_ValueCodec * grheap_type_codec(
   return GRHEAP_TYPE_HAS(t, codec) && t->codec != NULL ? t->codec : &heap->codec;
 }
 
-/** The codec of the precise root slot being visited: the source's, else the
- *  heap's. Meaningful only inside grheap_roots_enumerate. */
+/** The codec of the precise root slot being visited: the one the source says
+ *  is in force for this slot (the guest stack reports a frame per engine),
+ *  else the source's, else the heap's. Meaningful only inside
+ *  grheap_roots_enumerate. */
 static inline const GRHEAP_ValueCodec * grheap_root_codec(const GRHEAP_Heap * heap) {
+  const GRHEAP_ValueCodec * slot = grcore_context_root_codec(heap->context);
+  if (slot != NULL) {
+    return slot;
+  }
   return heap->root_codec != NULL ? heap->root_codec : &heap->codec;
 }
 

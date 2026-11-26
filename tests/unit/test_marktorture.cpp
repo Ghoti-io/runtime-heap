@@ -30,6 +30,7 @@
 
 #include "../test_helpers.h"
 
+#include <cstdlib>
 #include <ghoti.io/runtime-heap/runtime-heap.h>
 
 #include <gtest/gtest.h>
@@ -153,6 +154,12 @@ TEST(MarkTorture, TheInitializingStoreIsRightUnderAStopTheWorldCollector) {
 }
 
 TEST(MarkTorture, AbortModeNamesTheObjectAndStops) {
+  // The threadsafe style re-executes the binary, so the aborting child, which
+  // leaves its heap live, is not what a memory checker reports on. An emulator
+  // that runs a foreign binary cannot re-execute; a run there sets
+  // GRHEAP_TEST_DEATH_FAST and takes the fast style.
+  ::testing::FLAGS_gtest_death_test_style =
+      std::getenv("GRHEAP_TEST_DEATH_FAST") != nullptr ? "fast" : "threadsafe";
   EXPECT_DEATH(
       {
         HeapWorld w(torture_config(GRHEAP_MARK_TORTURE_ABORT));

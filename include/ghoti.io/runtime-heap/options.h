@@ -102,6 +102,32 @@ typedef enum {
   GRHEAP_VERIFY_ABORT
 } GRHEAP_Verify;
 
+/**
+ * @brief The mark-step torture: whether, and how, an interleaved mark is run
+ *   against the mutator.
+ *
+ * With it on, every GC point (an allocation, a poll, a declared point,
+ * ::grheap_gc_point) advances an incremental mark by one object, the
+ * `grheap_store` family applies a store barrier to it, an object allocated
+ * during a cycle is marked, and when nothing is left to mark a stop-the-world
+ * mark checks that nothing reachable was left unmarked. A violation is a store
+ * that is right under stop-the-world and wrong when marking interleaves: one
+ * made without the heap's store entry. Cycles alternate between an insertion
+ * barrier (new values shaded; roots scanned again at the end) and a deletion
+ * barrier (old values shaded; roots scanned at the start only), so a store
+ * that either discipline needs is found. Then a real collection runs and the
+ * next point starts the next cycle. While it is on, the allocation threshold
+ * and ::grheap_options_set_torture collect nothing at a GC point (they would
+ * end every cycle); an explicit ::grheap_collect or a reclaim request still
+ * does, and abandons the cycle in progress. It is an instrument, not a
+ * collector: the collector stays stop-the-world.
+ */
+typedef enum {
+  GRHEAP_MARK_TORTURE_OFF = 0, ///< Off (the default).
+  GRHEAP_MARK_TORTURE_COUNT,   ///< Violations are counted (`mark_violations`).
+  GRHEAP_MARK_TORTURE_ABORT    ///< The first is named on stderr and aborts.
+} GRHEAP_MarkTorture;
+
 /** @brief The default allocation threshold: 256 KiB. */
 #define GRHEAP_DEFAULT_GC_THRESHOLD 262144u
 
@@ -165,6 +191,27 @@ GRHEAP_API GRHEAP_Mode grheap_options_get_mode(const GRHEAP_Options * options);
  *   where it is four.
  */
 #define GRHEAP_DEFAULT_ADDRESS_BITS (sizeof(void *) == 8 ? 48u : 32u)
+
+/**
+ * @brief Sets the mark-step torture (see ::GRHEAP_MarkTorture).
+ *
+ * @param options The object.
+ * @param mode The mode.
+ * @return ::GRHEAP_OK, or ::GRHEAP_ERR_INVALID for NULL or an unknown mode.
+ *   Nothing changes on a refusal.
+ */
+GRHEAP_API GRHEAP_Result grheap_options_set_mark_torture(
+    GRHEAP_Options * options, GRHEAP_MarkTorture mode);
+
+/**
+ * @brief The mark-step torture mode.
+ *
+ * @param options The object.
+ * @return The mode; ::GRHEAP_MARK_TORTURE_OFF for NULL. The default comes from
+ *   the environment (`GRHEAP_MARK_TORTURE=1` aborts, `=count` counts).
+ */
+GRHEAP_API GRHEAP_MarkTorture grheap_options_get_mark_torture(
+    const GRHEAP_Options * options);
 
 /**
  * @brief Sets how many address bits every object of the heap fits in.

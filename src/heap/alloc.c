@@ -157,7 +157,11 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   } else {
     bool collected = false;
     heap->gc_seen[GRHEAP_GC_POINT_ALLOCATION]++;
-    if (heap->torture) {
+    if (heap->inc != NULL) {
+      heap->gc_acted[GRHEAP_GC_POINT_ALLOCATION]++;
+      grheap_inc_step(heap);
+      refusals = grcore_context_memory_refusals(heap->context);
+    } else if (heap->torture) {
       /* A GC point (AD-17) taken for real, every time: whatever is held only
        * in a C variable is gone now, and its cell is poisoned. */
       heap->gc_acted[GRHEAP_GC_POINT_ALLOCATION]++;
@@ -202,6 +206,7 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   if (weak) {
     grheap_weak_register(heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES);
   }
+  grheap_inc_allocated(heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES);
   *out_object = (unsigned char *)cellp + GRHEAP_HEADER_BYTES;
   return GRHEAP_OK;
 }

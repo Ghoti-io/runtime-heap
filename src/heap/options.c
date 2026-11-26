@@ -96,6 +96,8 @@ GRHEAP_Result grheap_options_create(
   o->torture = grheap_env_torture();
   o->verify = grheap_env_verify();
   o->address_bits = (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS;
+  o->mark_torture = GRHEAP_MARK_TORTURE_OFF;
+  (void)grheap_env_mark_torture(&o->mark_torture);
 #ifdef GRHEAP_RELOCATE
   o->relocate = grheap_env_relocate();
 #endif
@@ -222,4 +224,33 @@ GRHEAP_Result grheap_options_set_address_bits(
 
 unsigned grheap_options_get_address_bits(const GRHEAP_Options * options) {
   return options == NULL ? (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS : options->address_bits;
+}
+
+bool grheap_env_mark_torture(GRHEAP_MarkTorture * out) {
+  const char * v = getenv("GRHEAP_MARK_TORTURE");
+  if (v == NULL) {
+    return false;
+  }
+  if (strcmp(v, "1") == 0) {
+    *out = GRHEAP_MARK_TORTURE_ABORT;
+    return true;
+  }
+  if (strcmp(v, "count") == 0) {
+    *out = GRHEAP_MARK_TORTURE_COUNT;
+    return true;
+  }
+  return false;
+}
+
+GRHEAP_Result grheap_options_set_mark_torture(
+    GRHEAP_Options * options, GRHEAP_MarkTorture mode) {
+  if (options == NULL || (unsigned)mode > (unsigned)GRHEAP_MARK_TORTURE_ABORT) {
+    return GRHEAP_ERR_INVALID;
+  }
+  options->mark_torture = mode;
+  return GRHEAP_OK;
+}
+
+GRHEAP_MarkTorture grheap_options_get_mark_torture(const GRHEAP_Options * options) {
+  return options == NULL ? GRHEAP_MARK_TORTURE_OFF : options->mark_torture;
 }

@@ -47,7 +47,9 @@ GRHEAP_Result grheap_store(
   if (!grheap_usable(heap) || slot == NULL) {
     return GRHEAP_ERR_INVALID;
   }
+  grheap_inc_barrier(heap, holder, slot, 1, true);
   *slot = value;
+  grheap_inc_barrier(heap, holder, slot, 1, false);
   heap->stats.stores++;
   /* The holder is for a barrier, which this mode does not have; verify checks
    * it, and records what was written. */
@@ -64,7 +66,9 @@ GRHEAP_Result grheap_store_range(GRHEAP_Heap * heap, void * holder,
     return GRHEAP_ERR_INVALID;
   }
   if (count != 0) {
+    grheap_inc_barrier(heap, holder, dst, count, true);
     memmove(dst, src, count * sizeof(void *));
+    grheap_inc_barrier(heap, holder, dst, count, false);
   }
   heap->stats.stores += count;
   if (heap->verify != GRHEAP_VERIFY_OFF && count != 0) {
@@ -78,7 +82,9 @@ GRHEAP_Result grheap_store_word(
   if (!grheap_usable(heap) || slot == NULL) {
     return GRHEAP_ERR_INVALID;
   }
+  grheap_inc_barrier(heap, holder, slot, 1, true);
   *slot = value;
+  grheap_inc_barrier(heap, holder, slot, 1, false);
   heap->stats.stores++;
   if (heap->verify != GRHEAP_VERIFY_OFF) {
     grheap_verify_store(heap, holder, slot, 1);

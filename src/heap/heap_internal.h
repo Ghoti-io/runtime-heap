@@ -136,6 +136,7 @@ typedef enum {
   GRHEAP_TRACE_SHADOW,   ///< After a restore: record the slot as stored.
   GRHEAP_TRACE_RETAIN,   ///< A retention query: record the reference found.
   GRHEAP_TRACE_FORGET,   ///< A dead object: drop the shadow of every slot it reports.
+  GRHEAP_TRACE_STEP,     ///< Mark-step torture: shade the target.
 #ifdef GRHEAP_RELOCATE
   GRHEAP_TRACE_RELOCATE  ///< Relocation: rewrite the slot to its target's new address.
 #endif
@@ -192,6 +193,7 @@ struct GRHEAP_Options {
   bool torture;
   GRHEAP_Verify verify;
   unsigned address_bits;
+  GRHEAP_MarkTorture mark_torture;
 #ifdef GRHEAP_RELOCATE
   bool relocate;
 #endif
@@ -245,6 +247,8 @@ struct GRHEAP_Heap {
   unsigned address_bits;              ///< Every block lies below 2^address_bits.
   uint64_t gc_seen[8];                ///< GC points seen, by GRHEAP_GcPointKind.
   uint64_t gc_acted[8];               ///< Those a torture mode acted on.
+  struct GRHEAP_Incremental * inc;    ///< Mark-step torture, or NULL.
+  GRHEAP_MarkTorture mark_torture;    ///< The option.
   GRHEAP_ShadowEntry * shadow;        ///< Open-addressing table, or NULL.
   size_t shadow_cap;                  ///< A power of two, or 0.
   size_t shadow_count;
@@ -429,6 +433,24 @@ GRHEAP_INTERNAL_API void grheap_mark_stack_free(GRHEAP_Heap * heap);
 
 /** Runs one collection. The caller has checked ownership and `busy`. */
 GRHEAP_INTERNAL_API void grheap_collect_now(GRHEAP_Heap * heap);
+
+/* ---- mark-step torture (marktorture.c) ---------------------------------- */
+
+GRHEAP_INTERNAL_API bool grheap_env_mark_torture(GRHEAP_MarkTorture * out);
+GRHEAP_INTERNAL_API bool grheap_inc_create(GRHEAP_Heap * heap, GRHEAP_MarkTorture mode);
+GRHEAP_INTERNAL_API void grheap_inc_free(GRHEAP_Heap * heap);
+/** One GC point's worth of the interleaved mark. */
+GRHEAP_INTERNAL_API void grheap_inc_step(GRHEAP_Heap * heap);
+/** A real collection is about to run: abandon the cycle in progress. */
+GRHEAP_INTERNAL_API void grheap_inc_collected(GRHEAP_Heap * heap);
+/** An object was made: marked, if a cycle is running. */
+GRHEAP_INTERNAL_API void grheap_inc_allocated(GRHEAP_Heap * heap, void * payload);
+/** The store barrier; `before` says which side of the write this call is on. */
+GRHEAP_INTERNAL_API void grheap_inc_barrier(GRHEAP_Heap * heap, const void * holder,
+    const void * slots, size_t count, bool before);
+/** A STEP-mode tracer reports a slot. */
+GRHEAP_INTERNAL_API void grheap_inc_visit(
+    GRHEAP_Tracer * tracer, const void * slot, bool encoded);
 
 /** Decodes a word with a codec: false if the tag test fails. */
 GRHEAP_INTERNAL_API bool grheap_decode_with(

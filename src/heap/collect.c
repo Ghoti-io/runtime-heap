@@ -47,6 +47,7 @@
 #include "heap_internal.h"
 
 void grheap_collect_now(GRHEAP_Heap * heap) {
+  grheap_inc_collected(heap);
   heap->busy++;
   if (heap->verify != GRHEAP_VERIFY_OFF && !heap->shadow_lost) {
     (void)grheap_verify_walk(heap);

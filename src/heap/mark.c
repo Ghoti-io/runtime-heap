@@ -182,6 +182,10 @@ void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
   if (tracer == NULL || slot == NULL) {
     return;
   }
+  if (tracer->mode == GRHEAP_TRACE_STEP) {
+    grheap_inc_visit(tracer, slot, false);
+    return;
+  }
   if (tracer->mode == GRHEAP_TRACE_VERIFY) {
     grheap_verify_slot(tracer, slot);
     return;
@@ -213,6 +217,10 @@ void grheap_trace_slot(GRHEAP_Tracer * tracer, void ** slot) {
 
 void grheap_trace_word(GRHEAP_Tracer * tracer, uint64_t * slot) {
   if (tracer == NULL || slot == NULL) {
+    return;
+  }
+  if (tracer->mode == GRHEAP_TRACE_STEP) {
+    grheap_inc_visit(tracer, slot, true);
     return;
   }
   if (tracer->mode == GRHEAP_TRACE_VERIFY) {

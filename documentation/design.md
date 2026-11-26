@@ -224,6 +224,45 @@ restore drops their registry entries with the objects. No `cleared` callback
 runs at take or restore, and a destination type with a weak spec is accepted
 when its slots lie inside the payload and refused when they do not.
 
+## Mark-step torture: the interleaved mark, as an instrument
+
+A stop-the-world collector hides every defect that only an interleaved mark
+exposes: a reference written without the heap's store entry is found by the
+next full mark wherever it was put. The mark-step torture
+(`grheap_options_set_mark_torture`, or `GRHEAP_MARK_TORTURE=1` / `=count`)
+makes that class of defect fail now. At every GC point (an allocation, a poll,
+a declared point) it advances an incremental mark of its own by one object:
+roots shaded when a cycle starts, one grey object traced per point, objects
+made during a cycle marked, the `grheap_store` family applying a barrier. When
+nothing is grey it runs the collector's stop-the-world mark and reports every
+reachable object its own marks miss (`mark_violations`, or an abort naming the
+type). Then it collects for real, which poisons what the cycle freed, and the
+next point starts the next cycle.
+
+**Why at GC points, not inside stores.** With one owner thread and no helper,
+the collector runs only where the mutator calls it, so a step can fall only at a
+GC point; a one-object step at each of them covers every interleaving a
+collector that marks incrementally could produce.
+
+**Why both barrier disciplines.** Which barrier a production incremental mode
+would use is not decided, and each is broken by a different mistake: an
+insertion barrier (shade the new value, scan roots again at the end) by an
+initializing store written plainly, a deletion barrier (shade the old value,
+scan roots only at the start) by a reference removed without a store. Cycles
+alternate, so code that is right only under one choice fails under the other.
+The barrier shades the values the holder's trace reports for the slots written
+and also reads them as raw words and as the holder's codec; extra shading
+makes the check less strict, never wrong.
+
+**What it is not.** It is an instrument. The collector stays stop-the-world;
+the marks are kept beside it and thrown away. While it is on, the allocation
+threshold and the collect-at-every-point torture do nothing at a GC point (they
+would end every cycle); an explicit `grheap_collect` or a reclaim request still
+collects, and abandons the cycle. What it cannot see: a weak slot loaded
+directly and kept (there is no weak-read entry yet), and a slot dropped from a
+`trace` report without a store, which a deletion barrier only sees once the
+heap has a range-clear entry and a verify arm for it.
+
 ## Attaching an engine, and the GC points an engine declares
 
 **An address limit the heap enforces.** An engine's value word encodes only so

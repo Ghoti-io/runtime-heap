@@ -152,6 +152,7 @@ struct WorldConfig {
   uint64_t reserve = GRCORE_DEFAULT_MEMORY_RESERVE;
   bool create_heap = true;
   size_t granule = 0;  // the page provider's reported granule (zero: the system's)
+  int mark_torture = -1;  // -1 leaves the environment's; else a GRHEAP_MarkTorture
   // -1 leaves the instrument at what the environment says (GRHEAP_TORTURE,
   // GRHEAP_VERIFY, which `make test-torture` sets); 0 and 1 (verify: 0 off,
   // 1 count, 2 abort) are explicit and win. A test that asserts exactly when a
@@ -171,6 +172,7 @@ struct WorldConfig {
 inline WorldConfig steady(WorldConfig config = WorldConfig()) {
   config.torture = 0;
   config.relocate = 0;
+  config.mark_torture = 0;
   return config;
 }
 
@@ -224,6 +226,9 @@ struct HeapWorld {
       }
       if (config.verify >= 0) {
         grheap_options_set_verify(h, static_cast<GRHEAP_Verify>(config.verify));
+      }
+      if (config.mark_torture >= 0) {
+        grheap_options_set_mark_torture(h, static_cast<GRHEAP_MarkTorture>(config.mark_torture));
       }
 #ifdef GRHEAP_RELOCATE
       if (config.relocate >= 0) {

@@ -140,6 +140,10 @@ typedef struct GRHEAP_Stats {
   uint64_t weak_objects;      ///< Weak cells and ephemerons in the heap's weak
                               ///< registry: allocated or restored, not yet
                               ///< collected.
+  uint64_t mark_steps;        ///< Mark-step torture: GC points that advanced it.
+  uint64_t mark_cycles;       ///< Mark-step torture: cycles that finished.
+  uint64_t mark_violations;   ///< Mark-step torture: reachable objects a cycle
+                              ///< left unmarked.
 } GRHEAP_Stats;
 
 /** @brief Why an engine was refused (::grheap_attach_check). */

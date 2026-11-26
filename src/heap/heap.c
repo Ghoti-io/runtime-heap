@@ -47,8 +47,12 @@ static void heap_poll(
   }
   /* Torture collects at every poll, and a reclaim request is one more reason
    * to: one collection answers both. */
-  bool torture = heap->torture;
+  bool torture = heap->torture && heap->inc == NULL;
   heap->gc_seen[GRHEAP_GC_POINT_POLL]++;
+  if (heap->inc != NULL) {
+    heap->gc_acted[GRHEAP_GC_POINT_POLL]++;
+    grheap_inc_step(heap);
+  }
   if (torture || grcore_pollcall_reclaim_requested(call)) {
     if (torture) {
       heap->gc_acted[GRHEAP_GC_POINT_POLL]++;
@@ -69,6 +73,7 @@ static void heap_key_destroy(GRCORE_Context * context, void * value) {
   }
   grheap_roots_free(heap);
   grheap_mark_stack_free(heap);
+  grheap_inc_free(heap);
   grheap_shadow_free(heap);
   grheap_weak_free(heap);
   grheap_ids_free(heap);
@@ -112,6 +117,7 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->torture = options->torture;
     heap->verify = options->verify;
     heap->address_bits = options->address_bits;
+    heap->mark_torture = options->mark_torture;
 #ifdef GRHEAP_RELOCATE
     heap->relocate = options->relocate;
 #endif
@@ -123,14 +129,26 @@ GRHEAP_Result grheap_heap_create(GRCORE_Context * context,
     heap->torture = grheap_env_torture();
     heap->verify = grheap_env_verify();
     heap->address_bits = (unsigned)GRHEAP_DEFAULT_ADDRESS_BITS;
+    heap->mark_torture = GRHEAP_MARK_TORTURE_OFF;
+    (void)grheap_env_mark_torture(&heap->mark_torture);
 #ifdef GRHEAP_RELOCATE
     heap->relocate = grheap_env_relocate();
 #endif
   }
   heap->next_threshold = heap->threshold;
 
+  if (heap->mark_torture != GRHEAP_MARK_TORTURE_OFF &&
+      heap->mode == GRHEAP_MODE_COLLECTED &&
+      !grheap_inc_create(heap, heap->mark_torture)) {
+    allocator->free_fn(allocator->ctx, heap);
+    return grcore_context_memory_refusals(context) > refusals
+        ? GRHEAP_ERR_LIMIT
+        : GRHEAP_ERR_OOM;
+  }
+
   GRCORE_Result registered = grcore_context_register(context, &grheap_key, heap);
   if (registered != GRCORE_OK) {
+    grheap_inc_free(heap);
     allocator->free_fn(allocator->ctx, heap);
     if (registered == GRCORE_ERR_OOM &&
         grcore_context_memory_refusals(context) > refusals) {
@@ -223,7 +241,10 @@ GRHEAP_Result grheap_gc_point(GRHEAP_Heap * heap, GRHEAP_GcPointKind kind) {
     return GRHEAP_ERR_INVALID;
   }
   heap->gc_seen[kind]++;
-  if (heap->torture && heap->mode == GRHEAP_MODE_COLLECTED) {
+  if (heap->inc != NULL) {
+    heap->gc_acted[kind]++;
+    grheap_inc_step(heap);
+  } else if (heap->torture && heap->mode == GRHEAP_MODE_COLLECTED) {
     heap->gc_acted[kind]++;
     heap->stats.torture_collections++;
     grheap_collect_now(heap);

@@ -34,9 +34,9 @@
 
 namespace {
 
-// Heap blocks on this system lie below 2^47 (user space), above 2^40 for any
-// mapping the provider gives in practice, so a 40-bit limit is always broken
-// and a 48-bit one never is.
+// Where a mapping lands depends on what runs the test (under Valgrind it lies
+// far below where the system would put it), so the one width every block breaks
+// is 16 bits: no block ends within the first 64 KiB. The 48-bit one holds all.
 struct LimitWorld {
   TrackingAllocator allocator;
   FakePages pages;
@@ -101,7 +101,7 @@ TEST(Attach, AHostThatLowersTheLimitLetsTheNarrowEngineAttach) {
 }
 
 TEST(Attach, ASetLimitIsEnforcedWhenABlockIsTakenAndNothingLeaks) {
-  LimitWorld w(40);  // the provider's blocks lie above 2^40
+  LimitWorld w(16);  // every block the provider gives ends above 2^16
   void * p = nullptr;
   EXPECT_EQ(grheap_alloc(w.heap, &kLeaf, &p), GRHEAP_ERR_OOM);
   GRHEAP_Stats s = {};

@@ -34,6 +34,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -104,12 +105,16 @@ const GRCORE_RootSource kSource = GRCORE_ROOT_SOURCE_INIT("slots", slots_enumera
 struct W {
   HeapWorld w;
   Slots s;
-  explicit W(size_t slots, int verify = -1) : w(config(verify)) {
+  explicit W(size_t slots, int verify = -1, uint64_t threshold = 0)
+      : w(config(verify, threshold)) {
     s.words.assign(slots, 0);
     EXPECT_EQ(grcore_context_add_root_source(w.ctx, &kSource, &s), GRCORE_OK);
   }
-  static WorldConfig config(int verify) {
+  static WorldConfig config(int verify, uint64_t threshold) {
     WorldConfig c = steady();  // no torture: unrooted objects must survive to the take
+    if (threshold != 0) {
+      c.threshold = threshold;
+    }
     c.verify = verify;
     return c;
   }
@@ -322,6 +327,155 @@ TEST(ImageWeak, ARestoredWeakObjectPassesBarrierVerify) {
   ASSERT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
   ASSERT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);
   EXPECT_EQ(dst.w.stats().verify_violations, 0u);
+}
+
+/* ---- A failed restore gives back what its tables grew by ------------------ */
+
+namespace {
+
+// A "hold" whose restore refuses at the call numbered `g_refuse_at`.
+int g_restore_calls = 0;
+int g_refuse_at = -1;
+GRHEAP_Result counted_restore(GRCORE_Context *, void *, GRHEAP_ImageReader *, void *) {
+  return g_restore_calls++ == g_refuse_at ? GRHEAP_ERR_INVALID : GRHEAP_OK;
+}
+const GRHEAP_Type kHoldCounted = GRHEAP_TYPE_INIT("hold", sizeof(Hold), hold_trace, nullptr,
+    nullptr, noop_snapshot, counted_restore);
+const GRHEAP_Type * kCountedTable[] = {&kHoldCounted, &kWCell, nullptr};
+
+constexpr size_t kMany = 20;  // past the sixteen every table starts with
+
+struct Whole {
+  uint64_t objects, bytes, mapped, ids, weak, in_use;
+  long blocks;
+  static Whole of(W & x) {
+    GRHEAP_Stats s = x.w.stats();
+    return {s.live_objects, s.live_bytes, s.mapped_bytes, s.ids_live, s.weak_objects,
+        grcore_context_memory_in_use(x.w.ctx), x.w.allocator.live};
+  }
+};
+void expect_same(const Whole & a, const Whole & b, const char * what) {
+  SCOPED_TRACE(what);
+  EXPECT_EQ(a.objects, b.objects);
+  EXPECT_EQ(a.bytes, b.bytes);
+  EXPECT_EQ(a.mapped, b.mapped);
+  EXPECT_EQ(a.ids, b.ids);
+  EXPECT_EQ(a.weak, b.weak);
+  EXPECT_EQ(a.blocks, b.blocks);
+  EXPECT_EQ(a.in_use, b.in_use);
+}
+
+// An image that needs more spans, more weak entries and more IDs than the
+// first table of each holds: large objects with a mapping apiece, weak cells.
+void take_many(Taken & t) {
+  W src(2 * kMany);
+  for (size_t i = 0; i < kMany; i++) {
+    void * big = nullptr;
+    EXPECT_EQ(grheap_alloc_sized(src.w.heap, &kHoldCounted, 9000, &big), GRHEAP_OK);
+    src.s.words[i] = addr(big);
+    auto * cell = src.make<WCell>(&kWCell, i);
+    src.s.words[kMany + i] = addr(cell);
+    uint64_t id = 0;
+    EXPECT_EQ(grheap_id_of(src.w.heap, cell, &id), GRHEAP_OK);
+  }
+  EXPECT_EQ(grheap_image_take(src.w.heap, nullptr, &t.image), GRHEAP_OK);
+}
+
+// Fills a span table to sixteen and empties it, so the destination starts with
+// tables it already owns.
+void use_and_empty(W & x) {
+  for (int i = 0; i < 16; i++) {
+    void * p = nullptr;
+    EXPECT_EQ(grheap_alloc_sized(x.w.heap, &kHold, 9000, &p), GRHEAP_OK);
+  }
+  EXPECT_EQ(grheap_collect(x.w.heap), GRHEAP_OK);
+  EXPECT_EQ(x.w.stats().live_objects, 0u);
+}
+
+void succeeds_afterwards(W & dst, const Taken & t) {
+  GRHEAP_RestoreEnv env = env_for(kCountedTable);
+  g_refuse_at = -1;
+  EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_OK);
+  EXPECT_EQ(dst.w.stats().live_objects, 2 * kMany);
+  EXPECT_EQ(dst.w.stats().ids_live, kMany);
+  EXPECT_EQ(dst.w.stats().weak_objects, kMany);
+  EXPECT_EQ(grheap_collect(dst.w.heap), GRHEAP_OK);
+}
+
+}  // namespace
+
+TEST(ImageWeak, ARestoreRefusedPartWayLeavesNoGrownTableBehind) {
+  Taken t;
+  take_many(t);
+  for (bool used : {false, true}) {
+    for (int at : {0, 10, 19}) {
+      W dst(2 * kMany);
+      if (used) {
+        use_and_empty(dst);
+      }
+      Whole before = Whole::of(dst);
+      g_restore_calls = 0;
+      g_refuse_at = at;
+      GRHEAP_RestoreEnv env = env_for(kCountedTable);
+      EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
+      expect_same(before, Whole::of(dst), used ? "a hook, tables in use before" : "a hook");
+      succeeds_afterwards(dst, t);
+    }
+  }
+}
+
+// Refused after every object is made and registered: the destination's roots
+// are not the ones the image recorded.
+TEST(ImageWeak, ARestoreAbandonedForItsRootsLeavesNoGrownTableBehind) {
+  Taken t;
+  take_many(t);
+  W dst(2 * kMany - 1);
+  Whole before = Whole::of(dst);
+  g_refuse_at = -1;
+  GRHEAP_RestoreEnv env = env_for(kCountedTable);
+  EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
+  expect_same(before, Whole::of(dst), "abandoned");
+}
+
+// The allocator refuses one call, each in turn.
+TEST(ImageWeak, EveryAllocationRefusedDuringARestoreLeavesTheHeapAsItWas) {
+  Taken t;
+  take_many(t);
+  long total = 0;
+  g_refuse_at = -1;
+  {
+    W probe(2 * kMany, 0);
+    long start = probe.w.allocator.calls;
+    GRHEAP_RestoreEnv env = env_for(kCountedTable);
+    ASSERT_EQ(grheap_image_instantiate(probe.w.heap, t.image, &env), GRHEAP_OK);
+    total = probe.w.allocator.calls - start;
+  }
+  ASSERT_GT(total, 30);
+  for (long k = 1; k <= total; k++) {
+    W dst(2 * kMany, 0);
+    Whole before = Whole::of(dst);
+    dst.w.allocator.fail_at = dst.w.allocator.calls + k;
+    GRHEAP_RestoreEnv env = env_for(kCountedTable);
+    GRHEAP_Result r = grheap_image_instantiate(dst.w.heap, t.image, &env);
+    dst.w.allocator.fail_at = 0;
+    ASSERT_EQ(r, GRHEAP_ERR_OOM) << "allocation " << k;
+    expect_same(before, Whole::of(dst), ("allocation " + std::to_string(k)).c_str());
+    succeeds_afterwards(dst, t);
+  }
+}
+
+// The bytes a failed restore made do not count toward the next collection.
+TEST(ImageWeak, ARefusedRestoreDoesNotBringTheNextCollectionForward) {
+  Taken t;
+  take_many(t);  // far more than the threshold below
+  W dst(2 * kMany, -1, 100000);
+  g_restore_calls = 0;
+  g_refuse_at = 19;
+  GRHEAP_RestoreEnv env = env_for(kCountedTable);
+  EXPECT_EQ(grheap_image_instantiate(dst.w.heap, t.image, &env), GRHEAP_ERR_INVALID);
+  uint64_t collections = dst.w.stats().collections;
+  (void)dst.make<WCell>(&kWCell, 1);
+  EXPECT_EQ(dst.w.stats().collections, collections);
 }
 
 int main(int argc, char ** argv) {

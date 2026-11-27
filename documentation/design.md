@@ -378,6 +378,11 @@ blocks and the context's metered bytes are what they were. The one change a
 refused allocation can leave is the collection it ran before giving up, which
 frees what was unreachable.
 
+A failed restore is held to the same rule. It makes many objects, so its tables
+may grow several times before the failure; while it runs, the arrays it started
+with are kept aside instead of freed, and come back when its objects are
+removed, which needs nothing from an allocator that may be the thing refusing.
+
 ## `gc_store` is a function
 
 AD-11: every pointer store goes through `gc_store(holder, slot, value)`. In a

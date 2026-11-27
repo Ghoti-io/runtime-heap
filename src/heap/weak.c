@@ -172,7 +172,7 @@ void grheap_weak_register(
      * between may have compacted them. */
     if (heap->weak != NULL) {
       memcpy(room->grown, heap->weak, heap->nweak * sizeof *room->grown);
-      heap->allocator->free_fn(heap->allocator->ctx, heap->weak);
+      grheap_table_replaced(heap, heap->weak);
     }
     heap->weak = room->grown;
     heap->weak_cap = room->cap;

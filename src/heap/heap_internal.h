@@ -171,6 +171,23 @@ typedef struct GRHEAP_ShadowEntry {
   uint64_t value;  ///< Never zero (a zero value is an absent entry).
 } GRHEAP_ShadowEntry;
 
+/** What a restore's tables were when it started. While `active`, a table that
+ * grows keeps these arrays instead of freeing them, so that a restore that
+ * fails can give back every byte its growth took without asking the allocator
+ * for anything. */
+typedef struct GRHEAP_TableHold {
+  bool active;
+  struct GRHEAP_Span ** spans;
+  size_t spans_cap;
+  struct GRHEAP_WeakEntry * weak;
+  size_t weak_cap;
+  struct GRHEAP_IdEntry * ids;
+  size_t ids_cap;
+  size_t * id_index;
+  size_t id_index_cap;
+  uint64_t since_collect;
+} GRHEAP_TableHold;
+
 /** A registered weak cell or ephemeron. */
 typedef struct GRHEAP_WeakEntry {
   void * object;   ///< Its payload.
@@ -253,6 +270,8 @@ struct GRHEAP_Heap {
   size_t shadow_cap;                  ///< A power of two, or 0.
   size_t shadow_count;
   bool shadow_lost;                   ///< An insert failed; no comparison holds.
+
+  GRHEAP_TableHold hold;              ///< Set for the length of a restore.
 
   GRHEAP_WeakEntry * weak;            ///< Registered weak cells, ephemerons.
   size_t nweak;
@@ -592,6 +611,18 @@ GRHEAP_INTERNAL_API void grheap_verify_slot(
 /** Whether `type`'s weak spec fits in a payload of `bytes` bytes. */
 GRHEAP_INTERNAL_API bool grheap_weak_spec_fits(
     const GRHEAP_Type * type, size_t bytes);
+
+/** Records the tables as they are; a restore is starting. */
+GRHEAP_INTERNAL_API void grheap_tables_hold(GRHEAP_Heap * heap);
+
+/** The restore stands: the held arrays that growth replaced are freed. */
+GRHEAP_INTERNAL_API void grheap_tables_keep(GRHEAP_Heap * heap);
+
+/** The restore failed and its objects are gone: the held arrays return. */
+GRHEAP_INTERNAL_API void grheap_tables_return(GRHEAP_Heap * heap);
+
+/** Frees an array a grown table no longer uses, unless it is held. */
+GRHEAP_INTERNAL_API void grheap_table_replaced(GRHEAP_Heap * heap, void * old);
 
 /** Room made for one registration and not yet part of the heap. */
 typedef struct GRHEAP_WeakRoom {

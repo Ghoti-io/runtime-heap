@@ -35,6 +35,8 @@
 
 #include "heap_internal.h"
 
+#include <string.h>
+
 /* The ACT handler. A poll over the memory budget asks the handlers that can
  * reclaim to do so before it votes (CAP-2, AD-21), and a collection is the
  * reclaim a heap has. An arena has nothing to give back until it is reset. */
@@ -199,6 +201,98 @@ GRHEAP_Result grheap_stats(
   *out_stats = heap->stats;
   out_stats->weak_objects = heap->nweak;
   return GRHEAP_OK;
+}
+
+/* ---- the tables over a restore ------------------------------------------- */
+
+void grheap_tables_hold(GRHEAP_Heap * heap) {
+  GRHEAP_TableHold * h = &heap->hold;
+  h->active = true;
+  h->spans = heap->spans;
+  h->spans_cap = heap->spans_cap;
+  h->weak = heap->weak;
+  h->weak_cap = heap->weak_cap;
+  h->ids = heap->ids;
+  h->ids_cap = heap->ids_cap;
+  h->id_index = heap->id_index;
+  h->id_index_cap = heap->id_index_cap;
+  h->since_collect = heap->since_collect;
+}
+
+void grheap_table_replaced(GRHEAP_Heap * heap, void * old) {
+  const GRHEAP_TableHold * h = &heap->hold;
+  if (old == NULL ||
+      (h->active &&
+          (old == (void *)h->spans || old == (void *)h->weak ||
+              old == (void *)h->ids || old == (void *)h->id_index))) {
+    return;
+  }
+  heap->allocator->free_fn(heap->allocator->ctx, old);
+}
+
+static void release(GRHEAP_Heap * heap, void * array) {
+  if (array != NULL) {
+    heap->allocator->free_fn(heap->allocator->ctx, array);
+  }
+}
+
+void grheap_tables_keep(GRHEAP_Heap * heap) {
+  GRHEAP_TableHold * h = &heap->hold;
+  if (!h->active) {
+    return;
+  }
+  if (h->spans != heap->spans) {
+    release(heap, h->spans);
+  }
+  if (h->weak != heap->weak) {
+    release(heap, h->weak);
+  }
+  if (h->ids != heap->ids) {
+    release(heap, h->ids);
+  }
+  if (h->id_index != heap->id_index) {
+    release(heap, h->id_index);
+  }
+  h->active = false;
+}
+
+void grheap_tables_return(GRHEAP_Heap * heap) {
+  GRHEAP_TableHold * h = &heap->hold;
+  if (!h->active) {
+    return;
+  }
+  /* A table goes back when what is in it now fits what it was; something else
+   * may have added to it between a restore's two phases, and then the larger
+   * one stays. */
+  if (h->spans != heap->spans && heap->nspans <= h->spans_cap) {
+    if (heap->nspans != 0) {
+      memcpy(h->spans, heap->spans, heap->nspans * sizeof *h->spans);
+    }
+    release(heap, heap->spans);
+    heap->spans = h->spans;
+    heap->spans_cap = h->spans_cap;
+  }
+  if (h->weak != heap->weak && heap->nweak <= h->weak_cap) {
+    if (heap->nweak != 0) {
+      memcpy(h->weak, heap->weak, heap->nweak * sizeof *h->weak);
+    }
+    release(heap, heap->weak);
+    heap->weak = h->weak;
+    heap->weak_cap = h->weak_cap;
+  }
+  if (h->ids != heap->ids && heap->nids == 0) {
+    release(heap, heap->ids);
+    release(heap, heap->id_index);
+    heap->ids = h->ids;
+    heap->ids_cap = h->ids_cap;
+    heap->id_index = h->id_index;
+    heap->id_index_cap = h->id_index_cap;
+    if (heap->id_index_cap != 0) {
+      memset(heap->id_index, 0, heap->id_index_cap * sizeof *heap->id_index);
+    }
+  }
+  heap->since_collect = h->since_collect;
+  grheap_tables_keep(heap); /* whatever did not go back is freed */
 }
 
 unsigned grheap_address_bits(const GRHEAP_Heap * heap) {

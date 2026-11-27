@@ -76,7 +76,10 @@
  * a later ID cannot collide), and writes the root slots by enumerating the
  * context's root sources again, which must report the same number of slots as
  * at the take. It is refused into a heap that already holds objects or IDs.
- * Any failure leaves a collected heap exactly as it was. An arena heap cannot
+ * Any failure leaves a collected heap as it was: no object, ID, weak entry or
+ * mapping stays, and the allocator holds the blocks and bytes it held before
+ * (only the running counts of allocations and frees record the attempt). An
+ * arena heap cannot
  * give single objects back, so after a failed restore it keeps the cells (and
  * their accounting) the restore had made; they are unreachable, and a retry
  * needs a fresh heap or ::grheap_arena_reset.

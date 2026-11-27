@@ -1228,6 +1228,7 @@ static void pending_destroy(GRHEAP_Heap * heap, GRHEAP_Pending * p) {
 }
 
 void grheap_pending_free(GRHEAP_Heap * heap) {
+  grheap_tables_keep(heap);
   pending_destroy(heap, heap->pending);
   heap->pending = NULL;
 }
@@ -1436,6 +1437,7 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
   for (size_t i = 0; i < pending->nobjects; i++) {
     id_count += view_object(v, i).id != 0;
   }
+  grheap_tables_hold(heap);
   if (id_count != 0 && !grheap_ids_reserve_total(heap, id_count)) {
     r = grheap_failure(heap, refusals);
   }
@@ -1552,6 +1554,7 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
   }
   if (r != GRHEAP_OK) {
     remove_objects(heap, pending->addrs, pending->count);
+    grheap_tables_return(heap);
     pending_destroy(heap, pending);
     return r;
   }
@@ -1639,6 +1642,7 @@ static void abandon(GRHEAP_Heap * heap, GRHEAP_Pending * p) {
   if (p->ids) {
     grheap_ids_unadopt(heap);
   }
+  grheap_tables_return(heap);
 }
 
 GRHEAP_Result grheap_image_instantiate(GRHEAP_Heap * heap,
@@ -1663,6 +1667,7 @@ GRHEAP_Result grheap_image_instantiate(GRHEAP_Heap * heap,
     return r;
   }
   commit(heap, pending);
+  grheap_tables_keep(heap);
   pending_destroy(heap, pending);
   return GRHEAP_OK;
 }

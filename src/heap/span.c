@@ -121,7 +121,7 @@ static void install_table(GRHEAP_Heap * heap, GRHEAP_Span ** grown, size_t cap) 
   }
   if (heap->spans != NULL) {
     memcpy(grown, heap->spans, heap->nspans * sizeof(GRHEAP_Span *));
-    heap->allocator->free_fn(heap->allocator->ctx, heap->spans);
+    grheap_table_replaced(heap, heap->spans);
   }
   heap->spans = grown;
   heap->spans_cap = cap;

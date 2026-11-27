@@ -105,15 +105,17 @@ static bool grow_to(GRHEAP_Heap * heap, size_t cap) {
   if (index == NULL) {
     return false;
   }
-  GRHEAP_IdEntry * grown = heap->allocator->realloc_fn(
-      heap->allocator->ctx, heap->ids, cap * sizeof *grown);
+  GRHEAP_IdEntry * grown =
+      heap->allocator->malloc_fn(heap->allocator->ctx, cap * sizeof *grown);
   if (grown == NULL) {
     heap->allocator->free_fn(heap->allocator->ctx, index);
     return false;
   }
-  if (heap->id_index != NULL) {
-    heap->allocator->free_fn(heap->allocator->ctx, heap->id_index);
+  if (heap->nids != 0) {
+    memcpy(grown, heap->ids, heap->nids * sizeof *grown);
   }
+  grheap_table_replaced(heap, heap->ids);
+  grheap_table_replaced(heap, heap->id_index);
   heap->ids = grown;
   heap->ids_cap = cap;
   heap->id_index = index;

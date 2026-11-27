@@ -143,8 +143,9 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   uint64_t refusals = grcore_context_memory_refusals(heap->context);
   void * cellp;
   bool weak = grheap_type_weak(type) != NULL && heap->mode == GRHEAP_MODE_COLLECTED;
-  if (weak && !grheap_weak_reserve(heap)) {
-    /* The registry grows before the cell is taken, so a failure here has
+  GRHEAP_WeakRoom room = {NULL, 0};
+  if (weak && !grheap_weak_reserve(heap, &room)) {
+    /* The room is made before the cell is taken, so a failure here has
      * taken nothing. */
     return grheap_failure(heap, refusals);
   }
@@ -154,6 +155,7 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
     if (cellp == NULL) {
       return grheap_failure(heap, refusals);
     }
+    /* No weak object in an arena, so no room to give back. */
   } else {
     bool collected = false;
     heap->gc_seen[GRHEAP_GC_POINT_ALLOCATION]++;
@@ -186,6 +188,7 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
       cellp = grheap_take_cell(heap, cell);
     }
     if (cellp == NULL) {
+      grheap_weak_release(heap, &room);
       return grheap_failure(heap, refusals);
     }
   }
@@ -204,7 +207,8 @@ static GRHEAP_Result alloc_object(GRHEAP_Heap * heap, const GRHEAP_Type * type,
   heap->stats.live_bytes += charged;
   heap->since_collect += charged;
   if (weak) {
-    grheap_weak_register(heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES);
+    grheap_weak_register(
+        heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES, &room);
   }
   grheap_inc_allocated(heap, (unsigned char *)cellp + GRHEAP_HEADER_BYTES);
   *out_object = (unsigned char *)cellp + GRHEAP_HEADER_BYTES;

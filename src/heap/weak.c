@@ -142,7 +142,9 @@ void grheap_weak_each_slot(const GRHEAP_Type * type, void * payload,
   }
 }
 
-bool grheap_weak_reserve(GRHEAP_Heap * heap) {
+bool grheap_weak_reserve(GRHEAP_Heap * heap, GRHEAP_WeakRoom * room) {
+  room->grown = NULL;
+  room->cap = 0;
   if (heap->nweak < heap->weak_cap) {
     return true;
   }
@@ -150,17 +152,32 @@ bool grheap_weak_reserve(GRHEAP_Heap * heap) {
   if (cap > SIZE_MAX / sizeof(GRHEAP_WeakEntry)) {
     return false;
   }
-  GRHEAP_WeakEntry * grown = heap->allocator->realloc_fn(
-      heap->allocator->ctx, heap->weak, cap * sizeof *grown);
-  if (grown == NULL) {
-    return false;
-  }
-  heap->weak = grown;
-  heap->weak_cap = cap;
-  return true;
+  room->grown = heap->allocator->malloc_fn(
+      heap->allocator->ctx, cap * sizeof *room->grown);
+  room->cap = cap;
+  return room->grown != NULL;
 }
 
-void grheap_weak_register(GRHEAP_Heap * heap, void * payload) {
+void grheap_weak_release(GRHEAP_Heap * heap, GRHEAP_WeakRoom * room) {
+  if (room->grown != NULL) {
+    heap->allocator->free_fn(heap->allocator->ctx, room->grown);
+    room->grown = NULL;
+  }
+}
+
+void grheap_weak_register(
+    GRHEAP_Heap * heap, void * payload, GRHEAP_WeakRoom * room) {
+  if (room->grown != NULL) {
+    /* The entries are copied now, not when the room was made: a collection in
+     * between may have compacted them. */
+    if (heap->weak != NULL) {
+      memcpy(room->grown, heap->weak, heap->nweak * sizeof *room->grown);
+      heap->allocator->free_fn(heap->allocator->ctx, heap->weak);
+    }
+    heap->weak = room->grown;
+    heap->weak_cap = room->cap;
+    room->grown = NULL;
+  }
   heap->weak[heap->nweak].object = payload;
   heap->weak[heap->nweak].pending = false;
   heap->nweak++;

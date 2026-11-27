@@ -593,11 +593,25 @@ GRHEAP_INTERNAL_API void grheap_verify_slot(
 GRHEAP_INTERNAL_API bool grheap_weak_spec_fits(
     const GRHEAP_Type * type, size_t bytes);
 
-/** Makes room for one more registration, so the registration cannot fail. */
-GRHEAP_INTERNAL_API bool grheap_weak_reserve(GRHEAP_Heap * heap);
+/** Room made for one registration and not yet part of the heap. */
+typedef struct GRHEAP_WeakRoom {
+  GRHEAP_WeakEntry * grown; ///< A larger registry to install, or NULL.
+  size_t cap;               ///< Its capacity.
+} GRHEAP_WeakRoom;
 
-/** Registers a new weak object. Room was reserved. */
-GRHEAP_INTERNAL_API void grheap_weak_register(GRHEAP_Heap * heap, void * payload);
+/** Makes room for one more registration, so the registration cannot fail. The
+ * registry itself does not change: follow with grheap_weak_register, or with
+ * grheap_weak_release when the object is not made. */
+GRHEAP_INTERNAL_API bool grheap_weak_reserve(
+    GRHEAP_Heap * heap, GRHEAP_WeakRoom * room);
+
+/** Gives back room that no object took. */
+GRHEAP_INTERNAL_API void grheap_weak_release(
+    GRHEAP_Heap * heap, GRHEAP_WeakRoom * room);
+
+/** Registers a new weak object in the room reserved for it. */
+GRHEAP_INTERNAL_API void grheap_weak_register(
+    GRHEAP_Heap * heap, void * payload, GRHEAP_WeakRoom * room);
 
 /** After marking: the ephemeron fixpoint, then clearing, then dropping the dead
  *  from the registry. Allocates nothing. */

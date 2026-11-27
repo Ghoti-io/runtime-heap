@@ -62,6 +62,105 @@ class FailTest : public ::testing::Test {
   void SetUp() override { destroyed_log().clear(); }
 };
 
+/* ---- A refused block leaves the heap as it was ------------------------ */
+
+namespace {
+
+struct FailEph {
+  void * key;
+  void * value;
+};
+const GRHEAP_WeakSpec kFailEphSpec = {GRHEAP_EPHEMERON, 0,
+    offsetof(FailEph, key), offsetof(FailEph, value), false, nullptr};
+const GRHEAP_Type kFailEph = GRHEAP_TYPE_INIT("fail-eph", sizeof(FailEph),
+    nullptr, nullptr, &kFailEphSpec, nullptr, nullptr);
+
+// The page provider refuses, so the allocation does; the allocator's live
+// blocks and the context's metered bytes are what they were before it.
+void refused_by_the_provider(HeapWorld & w, const GRHEAP_Type & type,
+    size_t bytes, const char * what) {
+  SCOPED_TRACE(what);
+  long blocks = w.allocator.live;
+  uint64_t in_use = grcore_context_memory_in_use(w.ctx);
+  long mappings = w.pages.live;
+  w.pages.fail = true;
+  void * p = nullptr;
+  EXPECT_EQ(grheap_alloc_sized(w.heap, &type, bytes, &p), GRHEAP_ERR_OOM);
+  w.pages.fail = false;
+  EXPECT_EQ(p, nullptr);
+  EXPECT_EQ(w.allocator.live, blocks);
+  EXPECT_EQ(grcore_context_memory_in_use(w.ctx), in_use);
+  EXPECT_EQ(w.pages.live, mappings);
+  // The same allocation succeeds once the provider does.
+  EXPECT_EQ(grheap_alloc_sized(w.heap, &type, bytes, &p), GRHEAP_OK);
+}
+
+}  // namespace
+
+TEST_F(FailTest, AMappingRefusedToAnEmptyHeapLeavesNoBlockAndNoByte) {
+  for (size_t bytes : {size_t(16), size_t(200000)}) {
+    HeapWorld w(steady());
+    refused_by_the_provider(w, kLeaf, bytes, bytes == 16 ? "small" : "large");
+    WorldConfig arena = steady();
+    arena.mode = GRHEAP_MODE_ARENA;
+    HeapWorld a(arena);
+    refused_by_the_provider(a, kLeaf, bytes, "arena");
+  }
+}
+
+TEST_F(FailTest, AMappingRefusedWhenTheSpanTableIsFullDoesNotLeaveItGrown) {
+  std::vector<void *> keep(16, nullptr);
+  HeapWorld w(steady());
+  for (size_t i = 0; i < 16; i++) {
+    ASSERT_EQ(grheap_alloc_sized(w.heap, &kLeaf, 9000, &keep[i]), GRHEAP_OK);
+    ASSERT_EQ(grheap_root_add(w.heap, &keep[i]), GRHEAP_OK);
+  }
+  refused_by_the_provider(w, kLeaf, 9000, "seventeenth span");
+}
+
+TEST_F(FailTest, ARefusedWeakAllocationDoesNotLeaveItsRegistryGrown) {
+  {
+    HeapWorld w(steady());
+    refused_by_the_provider(w, kFailEph, sizeof(FailEph), "first weak object");
+  }
+  std::vector<void *> keep(16, nullptr);
+  HeapWorld w(steady());
+  for (size_t i = 0; i < 16; i++) {
+    ASSERT_EQ(grheap_alloc(w.heap, &kFailEph, &keep[i]), GRHEAP_OK);
+    ASSERT_EQ(grheap_root_add(w.heap, &keep[i]), GRHEAP_OK);
+  }
+  refused_by_the_provider(w, kFailEph, 200000, "seventeenth weak object");
+}
+
+/* The allocator refuses instead, at each call in turn and from then on: the
+ * table's copy is made, then the span's own block is refused. */
+TEST_F(FailTest, AnAllocatorRefusalOnTheWayToABlockLeavesNoBlockAndNoByte) {
+  for (const GRHEAP_Type * type : {&kLeaf, &kFailEph}) {
+    long refusals = 0;
+    for (long n = 1; n < 10; n++) {
+      HeapWorld w(steady());
+      long blocks = w.allocator.live;
+      uint64_t in_use = grcore_context_memory_in_use(w.ctx);
+      w.allocator.calls = 0;
+      w.allocator.fail_at = n;
+      w.allocator.sticky = true;
+      void * p = nullptr;
+      GRHEAP_Result r = grheap_alloc(w.heap, type, &p);
+      w.allocator.fail_at = 0;
+      w.allocator.sticky = false;
+      if (r == GRHEAP_OK) {
+        break;
+      }
+      refusals++;
+      EXPECT_EQ(r, GRHEAP_ERR_OOM) << type->name << " N=" << n;
+      EXPECT_EQ(w.allocator.live, blocks) << type->name << " N=" << n;
+      EXPECT_EQ(grcore_context_memory_in_use(w.ctx), in_use)
+          << type->name << " N=" << n;
+    }
+    EXPECT_GE(refusals, 2) << type->name;
+  }
+}
+
 /* ---- The allocator fails ---------------------------------------------- */
 
 /* An allocation that cannot get memory collects and tries once more, so a

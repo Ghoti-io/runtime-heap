@@ -1501,11 +1501,12 @@ static GRHEAP_Result apply(GRHEAP_Heap * heap, const View * v,
     if (grheap_type_weak(types[view_object(v, i).type]) == NULL) {
       continue;
     }
-    if (!grheap_weak_reserve(heap)) {
+    GRHEAP_WeakRoom room;
+    if (!grheap_weak_reserve(heap, &room)) {
       r = grheap_failure(heap, refusals);
       break;
     }
-    grheap_weak_register(heap, pending->addrs[i]);
+    grheap_weak_register(heap, pending->addrs[i], &room);
   }
 
   /* The types' own host pointers, by name. */

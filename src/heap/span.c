@@ -94,9 +94,14 @@ GRHEAP_Span * grheap_span_find(const GRHEAP_Heap * heap, uintptr_t addr) {
   return NULL;
 }
 
-/* Makes room for one more entry. Called before anything else is acquired, so
- * that the insert after the pages are mapped cannot fail. */
-static bool reserve_span_slot(GRHEAP_Heap * heap) {
+/* Makes room for one more entry, before anything else is acquired, so that the
+ * insert after the pages are mapped cannot fail. A full table is not grown in
+ * place: `*out_grown` is a larger one, which install_table() puts in once the
+ * span exists. A refused span frees it, and so leaves no block and no byte
+ * behind, without needing the allocator to give anything. */
+static bool reserve_span_slot(
+    GRHEAP_Heap * heap, GRHEAP_Span *** out_grown, size_t * out_cap) {
+  *out_grown = NULL;
   if (heap->nspans < heap->spans_cap) {
     return true;
   }
@@ -104,14 +109,28 @@ static bool reserve_span_slot(GRHEAP_Heap * heap) {
   if (cap > SIZE_MAX / sizeof(GRHEAP_Span *)) {
     return false;
   }
-  GRHEAP_Span ** grown = heap->allocator->realloc_fn(
-      heap->allocator->ctx, heap->spans, cap * sizeof(GRHEAP_Span *));
+  *out_grown = heap->allocator->malloc_fn(
+      heap->allocator->ctx, cap * sizeof(GRHEAP_Span *));
+  *out_cap = cap;
+  return *out_grown != NULL;
+}
+
+static void install_table(GRHEAP_Heap * heap, GRHEAP_Span ** grown, size_t cap) {
   if (grown == NULL) {
-    return false;
+    return;
+  }
+  if (heap->spans != NULL) {
+    memcpy(grown, heap->spans, heap->nspans * sizeof(GRHEAP_Span *));
+    heap->allocator->free_fn(heap->allocator->ctx, heap->spans);
   }
   heap->spans = grown;
   heap->spans_cap = cap;
-  return true;
+}
+
+static void drop_table(GRHEAP_Heap * heap, GRHEAP_Span ** grown) {
+  if (grown != NULL) {
+    heap->allocator->free_fn(heap->allocator->ctx, grown);
+  }
 }
 
 static void insert_span(GRHEAP_Heap * heap, GRHEAP_Span * span) {
@@ -154,17 +173,21 @@ GRHEAP_Span * grheap_span_create(
   size_t maps = kind == GRHEAP_SPAN_BLOCK ? 2u : 1u;
 #endif
 
-  if (!reserve_span_slot(heap)) {
+  GRHEAP_Span ** grown = NULL;
+  size_t cap = 0;
+  if (!reserve_span_slot(heap, &grown, &cap)) {
     return NULL;
   }
   GRHEAP_Span * span = heap->allocator->calloc_fn(heap->allocator->ctx, 1,
       sizeof(GRHEAP_Span) + maps * words * sizeof(uint64_t));
   if (span == NULL) {
+    drop_table(heap, grown);
     return NULL;
   }
   void * mem = heap->pages->map(heap->pages->ctx, map_size);
   if (mem == NULL) {
     heap->allocator->free_fn(heap->allocator->ctx, span);
+    drop_table(heap, grown);
     return NULL;
   }
   /* Every object must fit in the address bits the heap promised (RH-2): a
@@ -173,6 +196,7 @@ GRHEAP_Span * grheap_span_create(
       ((uint64_t)(uintptr_t)mem + map_size) > (UINT64_C(1) << heap->address_bits)) {
     heap->pages->unmap(heap->pages->ctx, mem, map_size);
     heap->allocator->free_fn(heap->allocator->ctx, span);
+    drop_table(heap, grown);
     heap->stats.address_refusals++;
     return NULL;
   }
@@ -187,6 +211,7 @@ GRHEAP_Span * grheap_span_create(
 #ifdef GRHEAP_RELOCATE
   span->stay = kind == GRHEAP_SPAN_BLOCK ? span->bits + 2u * words : NULL;
 #endif
+  install_table(heap, grown, cap);
   insert_span(heap, span);
   heap->stats.mapped_bytes += map_size;
   return span;

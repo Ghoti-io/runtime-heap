@@ -371,6 +371,13 @@ memory", and it is read from a counter rather than inferred from the shape of
 the failure, so that a refusal on an unexpected allocation (a span table
 growing, a pin table) is classified the same way as one on the page.
 
+A refused allocation takes nothing. The room it needs in the span table and in
+the weak registry is made first, so that nothing can fail once the cell exists,
+and is installed only when the cell does: after a refusal the allocator's live
+blocks and the context's metered bytes are what they were. The one change a
+refused allocation can leave is the collection it ran before giving up, which
+frees what was unreachable.
+
 ## `gc_store` is a function
 
 AD-11: every pointer store goes through `gc_store(holder, slot, value)`. In a
